@@ -35,7 +35,7 @@ from typing import Literal
 import time
 from jarvis.core.composition import Composition
 
-# from atomgpt.inverse_models.custom_trainer import CustomSFTTrainer
+from atomgpt.inverse_models.custom_trainer import CustomSFTTrainer
 
 parser = argparse.ArgumentParser(
     description="Atomistic Generative Pre-trained Transformer."
@@ -529,8 +529,8 @@ def main(config_file=None):
         type="torch", columns=["input_ids", "attention_mask", "output"]
     )
 
-    """
-    trainer = SFTTrainer(
+
+    trainer = CustomSFTTrainer(
         # trainer = CustomSFTTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -540,7 +540,7 @@ def main(config_file=None):
         dataset_text_field="text",
         max_seq_length=config.max_seq_length,
         dataset_num_proc=config.dataset_num_proc,
-        # loss_type=config.loss_type,
+        loss_type=config.loss_type,
         packing=False,  # Can make training 5x faster for short sequences.
         args=TrainingArguments(
             per_device_train_batch_size=config.per_device_train_batch_size,
@@ -564,7 +564,6 @@ def main(config_file=None):
         ),
     )
     """
-
     trainer = SFTTrainer(
         model=model,
         train_dataset=tokenized_train,
@@ -587,6 +586,7 @@ def main(config_file=None):
             save_steps=config.save_steps,
         ),
     )
+    """
     if callback_samples > 0:
         callback = ExampleTrainerCallback(
             some_tokenized_dataset=tokenized_eval,
