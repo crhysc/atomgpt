@@ -1,5 +1,5 @@
 # AtomGPT : Atomistic Generative Pre-trained Transformer for Forward and Inverse Materials Design
-test comment
+
 # Table of Contents
 * [Introduction](#intro)
 * [Installation](#install)
