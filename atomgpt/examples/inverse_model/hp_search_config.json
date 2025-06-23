@@ -1,0 +1,34 @@
+{
+  "parameters": {
+    "learning_rate": {
+      "include": false,
+      "type": "loguniform",
+      "low": 1e-5,
+      "high": 5e-4
+    },
+    "per_device_train_batch_size": {
+      "include": true,
+      "type": "categorical",
+      "choices": [16, 32, 64]
+    },
+    "gradient_accumulation_steps": {
+      "include": false,
+      "type": "categorical",
+      "choices": [1, 2, 4, 8]
+    },
+    "lora_rank": {
+      "include": false,
+      "type": "categorical",
+      "choices": [8, 16, 32]
+    },
+    "num_epochs": {
+      "include": false,
+      "type": "int",
+      "low": 1,
+      "high": 4
+    }
+  },
+  "n_trials": 4,
+  "study_direction": "minimize",
+  "objective_metric": "final_eval_loss"
+}
