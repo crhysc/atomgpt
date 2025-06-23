@@ -440,7 +440,7 @@ class CustomSFTTrainer(SFTTrainer):
     def __init__(
         self,
         model,
-        tokenizer,
+        processing_class,
         train_dataset,
         eval_dataset,
         dataset_text_field,
