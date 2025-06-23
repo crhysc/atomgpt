@@ -452,7 +452,7 @@ class CustomSFTTrainer(SFTTrainer):
     ):
         super().__init__(
             model=model,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             dataset_text_field=dataset_text_field,
