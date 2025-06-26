@@ -16,16 +16,6 @@ from pydantic_settings import BaseSettings
 from transformers import IntervalStrategy, TrainingArguments, TrainerCallback
 from peft import PeftModel
 
-# ────── logging ─────────────────────────────────────────────────────
-_DEBUG = os.getenv("ATOMGPT_DEBUG", "").lower() in {"1", "true", "yes", "y"}
-logging.basicConfig(
-    level=logging.DEBUG if _DEBUG else logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("hp_search")
-
-# ────── AtomGPT helpers ─────────────────────────────────────────────
 from atomgpt.inverse_models.loader import FastLanguageModel
 from atomgpt.inverse_models.custom_trainer import CustomSFTTrainer
 from atomgpt.inverse_models.inverse_models import (
@@ -37,9 +27,24 @@ from atomgpt.inverse_models.inverse_models import (
 from jarvis.db.jsonutils import dumpjson, loadjson
 from jarvis.core.atoms import Atoms
 
+# ═════════════════════════════ Logging ══════════════════════════════
+"""
+export ATOMGPT_DEBUG="true" to see debug lines in the console
+"""
+_DEBUG = os.getenv("ATOMGPT_DEBUG", "").lower() in {"1", "true", "yes", "y"}
+logging.basicConfig(
+    level=logging.DEBUG if _DEBUG else logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("hp_search")
 
 # ═════════════════════════════ Config ═══════════════════════════════
-class _SharedDefaults(BaseSettings):
+"""
+_SharedConfig contains fields in the normal AtomGPT config.json and the
+new hyperparameter_search.py hp_search_cfg.json
+"""
+class _SharedConfig(BaseSettings):
     instruction: str = "Below is a description of a material."
     alpaca_prompt: str = "### Instruction:\n{}\n### Input:\n{}\n### Output:\n{}"
     chem_info: str = "formula"
@@ -50,8 +55,11 @@ class _SharedDefaults(BaseSettings):
         " Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
     )
 
-
-class TrainingConfig(_SharedDefaults):
+"""
+TrainingConfig contains values and hyperparameters unique to the normal
+AtomGPT config.json
+"""
+class TrainingConfig(_SharedConfig):
     hp_cfg_path: str
     id_prop_path: str
     model_name: str
@@ -82,8 +90,12 @@ class TrainingConfig(_SharedDefaults):
     num_train: int | None = None
     num_test: int | None = None
 
-
-class HpSearchConfig(BaseSettings):
+"""
+OptunaSearchConfig is a schema for defining hyperparemeters 
+and values specific to a hyperparameter search study conducted 
+with this script
+"""
+class OptunaSearchConfig(BaseSettings):
     parameters: Dict[str, Dict]
     n_trials: int = 30
     objective_metric: str | None = None
@@ -94,19 +106,30 @@ class HpSearchConfig(BaseSettings):
 
 
 # ═════════════════════════ Metrics helpers ═══════════════════════════
-def _final(xs: List[float]) -> float:
+"""
+last_value() returns the final value of the optimization parameter.
+"""
+def last_value(xs: List[float]) -> float:
     return float("inf") if not xs else xs[-1]
 
 
-def _auc(xs: List[float]) -> float:
+"""
+area_under_curve() returns the area under the curve of a set of 
+optimization parameter values. 
+"""
+def area_under_curve(xs: List[float]) -> float:
     return float("inf") if not xs else np.trapz(xs)
 
 
-def _slope(xs: List[float]) -> float:
+"""
+trend_slope() returns the slope of the line of best fit for a
+set of optimization parameter values.
+"""
+def trend_slope(xs: List[float]) -> float:
     return float("inf") if len(xs) < 2 else abs(np.polyfit(range(len(xs)), xs, 1)[0])
 
 
-_METRIC_FUNS: Dict[str, Callable[[Dict[str, float]], float]] = {
+METRIC_EVALUATORS: Dict[str, Callable[[Dict[str, float]], float]] = {
     "training_time": lambda m: m["training_time"],
     "final_train_loss": lambda m: m["final_train_loss"],
     "final_eval_loss": lambda m: m["final_eval_loss"],
@@ -150,6 +173,9 @@ class SearchSpaceSampler:
 
 
 # ═════════════════════ Optuna pruning callback ═══════════════════════
+"""
+Ends the current trial if deemed unpromising.
+"""
 class OptunaPruningCallback(TrainerCallback):
     def __init__(self, trial: Trial, key: str):
         self.trial, self.key = trial, key
@@ -170,7 +196,10 @@ def _set_seeds(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def _triple_split(
+"""
+Deterministically shuffle IDs and split into train/val/test lists.
+"""
+def train_val_test_split_ids(
     data: List[dict], id_tag: str, seed: int, val_ratio: float, test_ratio: float
 ):
     if val_ratio + test_ratio >= 1.0:
@@ -281,12 +310,12 @@ def _train_once(
 
     metrics = {
         "training_time": runtime,
-        "final_train_loss": _final(tl),
-        "final_eval_loss": _final(el),
-        "auc_train_loss": _auc(tl),
-        "auc_eval_loss": _auc(el),
-        "slope_train_loss": _slope(tl),
-        "slope_eval_loss": _slope(el),
+        "final_train_loss": last_value(tl),
+        "final_eval_loss": last_value(el),
+        "auc_train_loss": area_under_curve(tl),
+        "auc_eval_loss": area_under_curve(el),
+        "slope_train_loss": trend_slope(tl),
+        "slope_eval_loss": trend_slope(el),
     }
     if _DEBUG:
         log.debug("Single pass metrics: %s", metrics)
@@ -300,12 +329,12 @@ def _train_once(
 def objective(
     trial: Trial,
     train_cfg: TrainingConfig,
-    hp_cfg: HpSearchConfig,
+    hp_cfg: OptunaSearchConfig,
     sampler: SearchSpaceSampler,
     train_json: Path,
     val_json: Path,
     test_json: Path,
-    obj_keys: List[str],
+    objective_metrics: List[str],
 ) -> List[float] | float:
 
     _set_seeds(train_cfg.seed_val + trial.number)
@@ -323,7 +352,7 @@ def objective(
     try:
         metrics_avgs = []
         for _ in range(hp_cfg.time_repeats):
-            prune_cb = OptunaPruningCallback(trial, obj_keys[0])
+            prune_cb = OptunaPruningCallback(trial, objective_metrics[0])
             metrics_avgs.append(_train_once(cfg, train_json, val_json, prune_cb))
 
         metrics = {
@@ -334,7 +363,7 @@ def objective(
 
         for k, v in metrics.items():
             trial.set_user_attr(k, v)
-        trial.set_user_attr("metrics_vec", [metrics[m] for m in obj_keys])
+        trial.set_user_attr("metrics_vec", [metrics[m] for m in objective_metrics])
 
         log_path = Path("logs")
         log_path.mkdir(exist_ok=True)
@@ -349,92 +378,12 @@ def objective(
         if _DEBUG:
             log.debug("Trial %d finished — metrics: %s", trial.number, metrics)
 
-        out = [_METRIC_FUNS[m](metrics) for m in obj_keys]
+        out = [METRIC_EVALUTATORS[m](metrics) for m in objective_metrics]
         return out[0] if len(out) == 1 else tuple(out)
 
     finally:
         shutil.rmtree(work, ignore_errors=True)
         torch.cuda.empty_cache()
-
-
-# ═════════════════════ CLI / study orchestration ═════════════════════
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--config_name", required=True, help="Path to a TrainingConfig JSON")
-    args = p.parse_args()
-
-    train_cfg = TrainingConfig(**json.load(open(args.config_name)))
-    hp_cfg = HpSearchConfig(**json.load(open(train_cfg.hp_cfg_path)))
-
-    obj_keys = hp_cfg.objective_metrics or (
-        [hp_cfg.objective_metric] if hp_cfg.objective_metric else ["final_eval_loss"]
-    )
-    directions = hp_cfg.study_directions or (
-        [hp_cfg.study_direction] if hp_cfg.study_direction else None
-    )
-    if directions is None:
-        directions = [_auto_direction(k) for k in obj_keys]
-
-    if _DEBUG:
-        log.debug("Objectives: %s | Directions: %s", obj_keys, directions)
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA GPU required")
-
-    data = _load_id_prop_data(train_cfg.id_prop_path, train_cfg)
-
-    train_ids, val_ids, test_ids = _triple_split(
-        data,
-        train_cfg.id_tag,
-        train_cfg.seed_val,
-        train_cfg.val_ratio,
-        train_cfg.test_ratio,
-    )
-
-    if _DEBUG:
-        log.debug(
-            "Dataset split sizes — train: %d | val: %d | test: %d",
-            len(train_ids),
-            len(val_ids),
-            len(test_ids),
-        )
-
-    tmp = Path(tempfile.mkdtemp(prefix="optuna_data_"))
-    train_j = tmp / "train.json"
-    val_j = tmp / "val.json"
-    test_j = tmp / "test.json"
-    dumpjson(make_alpaca_json(data, train_ids, config=train_cfg), train_j)
-    dumpjson(make_alpaca_json(data, val_ids, config=train_cfg), val_j)
-    dumpjson(make_alpaca_json(data, test_ids, config=train_cfg), test_j)
-
-    sampler = SearchSpaceSampler(hp_cfg.parameters)
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
-    study = optuna.create_study(directions=directions, pruner=pruner)
-
-    wall = time.time()
-    study.optimize(
-        partial(
-            objective,
-            train_cfg=train_cfg,
-            hp_cfg=hp_cfg,
-            sampler=sampler,
-            train_json=train_j,
-            val_json=val_j,
-            test_json=test_j,
-            obj_keys=obj_keys,
-        ),
-        n_trials=hp_cfg.n_trials,
-    )
-    runtime = time.time() - wall
-    print("\nStudy finished in %.1fs" % runtime)
-    if len(obj_keys) == 1:
-        print("Best value :", study.best_value)
-    else:
-        print("Best values:", study.best_values)
-    print("Best params :", study.best_params)
-
-    if _DEBUG:
-        log.debug("Full study completed in %.1fs", runtime)
 
 
 # ═══════════════════ id_prop.csv loader  ════════════════════
@@ -474,6 +423,89 @@ def _load_id_prop_data(id_prop_csv: str, cfg: TrainingConfig) -> List[dict]:
             }
         )
     return records
+
+
+# ═════════════════════ CLI / study orchestration ═════════════════════
+def main() -> None:
+    """
+    Entrypoint: run an Optuna HPO study for AtomGPT fine-tuning.
+    """
+    p = argparse.ArgumentParser()
+    p.add_argument("--config_name", required=True, help="Path to a TrainingConfig JSON")
+    args = p.parse_args()
+
+    train_cfg = TrainingConfig(**json.load(open(args.config_name)))
+    hp_cfg = OptunaSearchConfig(**json.load(open(train_cfg.hp_cfg_path)))
+
+    objective_metrics = hp_cfg.objective_metrics or (
+        [hp_cfg.objective_metric] if hp_cfg.objective_metric else ["final_eval_loss"]
+    )
+    directions = hp_cfg.study_directions or (
+        [hp_cfg.study_direction] if hp_cfg.study_direction else None
+    )
+    if directions is None:
+        directions = [_auto_direction(k) for k in objective_metrics]
+
+    if _DEBUG:
+        log.debug("Objectives: %s | Directions: %s", objective_metrics, directions)
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU required")
+
+    data = _load_id_prop_data(train_cfg.id_prop_path, train_cfg)
+
+    train_ids, val_ids, test_ids = train_val_test_split_ids(
+        data,
+        train_cfg.id_tag,
+        train_cfg.seed_val,
+        train_cfg.val_ratio,
+        train_cfg.test_ratio,
+    )
+
+    if _DEBUG:
+        log.debug(
+            "Dataset split sizes — train: %d | val: %d | test: %d",
+            len(train_ids),
+            len(val_ids),
+            len(test_ids),
+        )
+
+    tmp = Path(tempfile.mkdtemp(prefix="optuna_data_"))
+    train_j = tmp / "train.json"
+    val_j = tmp / "val.json"
+    test_j = tmp / "test.json"
+    dumpjson(make_alpaca_json(data, train_ids, config=train_cfg), train_j)
+    dumpjson(make_alpaca_json(data, val_ids, config=train_cfg), val_j)
+    dumpjson(make_alpaca_json(data, test_ids, config=train_cfg), test_j)
+
+    sampler = SearchSpaceSampler(hp_cfg.parameters)
+    pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
+    study = optuna.create_study(directions=directions, pruner=pruner)
+
+    wall = time.time()
+    study.optimize(
+        partial(
+            objective,
+            train_cfg=train_cfg,
+            hp_cfg=hp_cfg,
+            sampler=sampler,
+            train_json=train_j,
+            val_json=val_j,
+            test_json=test_j,
+            objective_metrics=objective_metrics,
+        ),
+        n_trials=hp_cfg.n_trials,
+    )
+    runtime = time.time() - wall
+    print("\nStudy finished in %.1fs" % runtime)
+    if len(objective_metrics) == 1:
+        print("Best value :", study.best_value)
+    else:
+        print("Best values:", study.best_values)
+    print("Best params :", study.best_params)
+
+    if _DEBUG:
+        log.debug("Full study completed in %.1fs", runtime)
 
 
 # ═════════════════════════════════════════════════════════════════════
