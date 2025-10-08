@@ -8,6 +8,7 @@ from atomgpt.inverse_models.callbacks import (
 )
 from transformers import (
     TrainingArguments,
+    EarlyStoppingCallback,   
 )
 import torch
 from atomgpt.inverse_models.utils import (
@@ -17,6 +18,7 @@ from atomgpt.inverse_models.utils import (
     get_figlet,
 )
 from trl import SFTTrainer, SFTConfig
+from trl import DataCollatorForCompletionOnlyLM  # ADDED
 from peft import PeftModel
 from datasets import load_dataset
 from functools import partial
@@ -27,6 +29,7 @@ import pprint
 from jarvis.io.vasp.inputs import Poscar
 import csv
 import os
+import numpy as np
 from pydantic_settings import BaseSettings
 import sys
 import json
@@ -64,14 +67,14 @@ class TrainingPropConfig(BaseSettings):
     gradient_accumulation_steps: int = 4
     num_train: Optional[int] = None
     num_test: Optional[int] = None
-    test_ratio: Optional[float] = 0.1
-    val_ratio: Optional[float] = 0.1
+    test_ratio: Optional[float] = 0.2
     model_save_path: str = "atomgpt_lora_model"
     lora_rank: Optional[int] = 16
     lora_alpha: Optional[int] = 16
     loss_type: str = "default"
     optim: str = "adamw_8bit"
     id_tag: str = "id"
+    save_strategy: str = "st"
     lr_scheduler_type: str = "linear"
     separator: str = ","
     prop: str = "Tc_supercon"
@@ -98,15 +101,16 @@ class TrainingPropConfig(BaseSettings):
     output_prompt: str = (
         " Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
     )
-    # num_val: Optional[int] = 2
-    hp_cfg_path: Optional[str] = "hp_search_config.json"
-    per_device_train_batch_size: int = 2
-    gradient_accumulation_steps: int = 4
-    warmup_steps: int = 3
-    warmup_ratio: float = 0.0
-    logging_steps: int = 10
-
-
+    val_ratio: Optional[float] = 0.1   
+    num_val: Optional[int] = None   
+    eval_strategy: Literal["no", "steps", "epoch"] = "steps"   
+    eval_steps: int = 200   
+    load_best_model_at_end: bool = True   
+    metric_for_best_model: str = "eval_loss"   
+    greater_is_better: bool = False   
+    save_total_limit: int = 2   
+    early_stopping_patience: int = 3   
+    early_stopping_threshold: float = 0.0   
 
 
 def get_input(config=None, chem="", val=10):
@@ -213,42 +217,96 @@ def load_model(path="", config=None):
     FastLanguageModel.for_inference(model)
     return model, tokenizer, config
 
+def _validate_atoms(atoms):
+    if atoms is None:
+        return False, "atoms_is_none"
+    try:
+        lat = np.asarray(getattr(atoms, "lattice_mat", None), dtype=float)
+        if lat.shape != (3, 3):
+            return False, f"bad_lattice_shape:{getattr(atoms,'lattice_mat',None)}"
+        if not np.isfinite(lat).all():
+            return False, "nonfinite_lattice"
+        n = getattr(atoms, "num_atoms", None)
+        if n is None or n <= 0:
+            return False, f"num_atoms_invalid:{n}"
+        _ = Poscar(atoms).to_string()
+        return True, ""
+    except Exception as e:
+        return False, f"poscar_fail:{type(e).__name__}:{e}"
+
+def _poscar_one_line(at):
+    return Poscar(at).to_string().replace("\n", "\\n")
+
+def _misses_path(csv_out, config):
+    fname = getattr(config, "miss_csv", None)
+    if fname is None or not str(fname).strip():
+        root, ext = os.path.splitext(csv_out)
+        fname = root + ".misses.csv"
+    os.makedirs(os.path.dirname(os.path.abspath(fname)), exist_ok=True)
+    return fname
 
 def evaluate(
-    test_set=[], model="", tokenizer="", csv_out="out.csv", config=""
+    test_set=[],
+    model="",
+    tokenizer="",
+    csv_out="out.csv",
+    config="",
 ):
     print("Testing\n", len(test_set))
-    f = open(csv_out, "w")
-    f.write("id,target,prediction\n")
+    os.makedirs(os.path.dirname(os.path.abspath(csv_out)), exist_ok=True)
+    miss_csv_out = _misses_path(csv_out, config)
 
-    for i in tqdm(test_set, total=len(test_set)):
-        # try:
-        # prompt = i["input"]
-        # print("prompt", prompt)
-        gen_mat = gen_atoms(
-            prompt=i["input"],
-            tokenizer=tokenizer,
-            model=model,
-            alpaca_prompt=config.alpaca_prompt,
-            instruction=config.instruction,
-        )
-        target_mat = text2atoms("\n" + i["output"])
-        print("target_mat", target_mat)
-        print("genmat", gen_mat)
-        line = (
-            i["id"]
-            + ","
-            + Poscar(target_mat).to_string().replace("\n", "\\n")
-            + ","
-            + Poscar(gen_mat).to_string().replace("\n", "\\n")
-            + "\n"
-        )
-        f.write(line)
-        # print()
-    # except Exception as exp:
-    #    print("Error", exp)
-    #    pass
-    f.close()
+    with open(csv_out, "w", newline="") as f_ok, open(miss_csv_out, "w", newline="") as f_miss:
+        ok_writer = csv.writer(f_ok)
+        miss_writer = csv.writer(f_miss)
+        ok_writer.writerow(["id", "target", "prediction"])
+        miss_writer.writerow(["id", "stage", "error", "detail", "raw_text_preview"])
+
+        for i in tqdm(test_set, total=len(test_set)):
+            sample_id = i.get("id", "")
+            target_mat = None
+            target_err = None
+            try:
+                target_mat = text2atoms("\n" + i["output"])
+                ok, detail = _validate_atoms(target_mat)
+                if not ok:
+                    target_err = detail
+            except Exception as e:
+                target_err = f"text2atoms:{type(e).__name__}:{e}"
+
+            if target_err:
+                miss_writer.writerow([sample_id, "target", "invalid_target", target_err, (i.get("output","")[:240])])
+                continue
+
+            gen_mat = None
+            gen_err = None
+            try:
+                gen_mat = gen_atoms(
+                    prompt=i["input"],
+                    tokenizer=tokenizer,
+                    model=model,
+                    alpaca_prompt=config.alpaca_prompt,
+                    instruction=config.instruction,
+                )
+                ok, detail = _validate_atoms(gen_mat)
+                if not ok:
+                    gen_err = detail
+            except Exception as e:
+                gen_err = f"gen_atoms:{type(e).__name__}:{e}"
+
+            if gen_err:
+                miss_writer.writerow([sample_id, "prediction", "invalid_prediction", gen_err, ""])
+                continue
+
+            try:
+                ok_writer.writerow([
+                    sample_id,
+                    _poscar_one_line(target_mat),
+                    _poscar_one_line(gen_mat),
+                ])
+            except Exception as e:
+                miss_writer.writerow([sample_id, "write", "write_failed", f"{type(e).__name__}:{e}", ""])
+
 
 
 def batch_evaluate(
@@ -364,6 +422,7 @@ def main(config_file=None):
     run_path = os.path.dirname(id_prop_path)
     num_train = config.num_train
     num_test = config.num_test
+    num_val = config.num_val   
     # model_name = config.model_name
     callback_samples = config.callback_samples
     # loss_function = config.loss_function
@@ -372,8 +431,12 @@ def main(config_file=None):
         reader = csv.reader(f)
         dt = [row for row in reader]
     if not num_train:
-        num_test = int(len(dt) * config.test_ratio)
-        num_train = len(dt) - num_test
+        if num_test is None:
+            num_test = int(len(dt) * config.test_ratio)   
+        if num_val is None:
+            vr = config.val_ratio if config.val_ratio is not None else 0.1   
+            num_val = int(len(dt) * vr)   
+        num_train = len(dt) - num_test - num_val   
 
     dat = []
     ids = []
@@ -391,7 +454,7 @@ def main(config_file=None):
         # if ";" in i[1]:
         #    tmp = "\n".join([str(round(float(j), 2)) for j in i[1].split(";")])
         # else:
-        #    tmp = str(round(float(i[1]), 3))
+            #    tmp = str(round(float(i[1]), 3))
         info[config.prop] = (
             tmp  # float(i[1])  # [float(j) for j in i[1:]]  # float(i[1]
         )
@@ -410,8 +473,10 @@ def main(config_file=None):
 
     train_ids = ids[0:num_train]
     print("num_train", num_train)
+    print("num_val", num_val)   
     print("num_test", num_test)
-    test_ids = ids[num_train : num_train + num_test]
+    val_ids = ids[num_train : num_train + num_val]   
+    test_ids = ids[num_train + num_val : num_train + num_val + num_test]   
     # test_ids = ids[num_train:]
     alpaca_prop_train_filename = os.path.join(
         config.output_dir, "alpaca_prop_train.json"
@@ -431,6 +496,20 @@ def main(config_file=None):
         print(alpaca_prop_train_filename, " exists")
         m_train = loadjson(alpaca_prop_train_filename)
     print("Sample:\n", m_train[0])
+
+    alpaca_prop_val_filename = os.path.join(   
+        config.output_dir, "alpaca_prop_val.json"   
+    )   
+    if not os.path.exists(alpaca_prop_val_filename):   
+        m_val = make_alpaca_json(   
+            dataset=dat,   
+            jids=val_ids,   
+            config=config,   
+        )   
+        dumpjson(data=m_val, filename=alpaca_prop_val_filename)   
+    else:   
+        print(alpaca_prop_val_filename, "exists")   
+        m_val = loadjson(alpaca_prop_val_filename)   
 
     alpaca_prop_test_filename = os.path.join(
         config.output_dir, "alpaca_prop_test.json"
@@ -494,6 +573,11 @@ def main(config_file=None):
         split="train",
         # "json", data_files="alpaca_prop_train.json", split="train"
     )
+    val_dataset = load_dataset(   
+        "json",   
+        data_files=alpaca_prop_val_filename,   
+        split="train",   
+    )   
     eval_dataset = load_dataset(
         "json",
         data_files=alpaca_prop_test_filename,
@@ -516,6 +600,10 @@ def main(config_file=None):
         formatting_prompts_func_with_prompt,
         batched=True,
     )
+    val_dataset = val_dataset.map(   
+        formatting_prompts_func_with_prompt,   
+        batched=True,   
+    )   
     eval_dataset = eval_dataset.map(
         formatting_prompts_func_with_prompt,
         batched=True,
@@ -529,13 +617,23 @@ def main(config_file=None):
     print(f"🧠 Suggested max_seq_length based on dataset: {max_seq_length}")
 
     tokenized_train = train_dataset.map(tokenize_function, batched=True)
+    tokenized_val = val_dataset.map(tokenize_function, batched=True)   
     tokenized_eval = eval_dataset.map(tokenize_function, batched=True)
     tokenized_train.set_format(
         type="torch", columns=["input_ids", "attention_mask", "output"]
     )
+    tokenized_val.set_format(   
+        type="torch", columns=["input_ids", "attention_mask", "output"]   
+    )   
     tokenized_eval.set_format(
         type="torch", columns=["input_ids", "attention_mask", "output"]
     )
+
+    # ADDED: Completion-only collator to mask loss to the completion after "### Output:"
+    response_template = "### Output:"  # ADDED
+    collator = DataCollatorForCompletionOnlyLM(  # ADDED
+        response_template=response_template, tokenizer=tokenizer, mlm=False
+    )  # ADDED
 
     """
     trainer = SFTTrainer(
@@ -575,30 +673,42 @@ def main(config_file=None):
 
     trainer = SFTTrainer(
         model=model,
-        train_dataset=tokenized_train,
+        train_dataset=train_dataset,                 # ADDED/MODIFIED: use raw text dataset so collator can mask
+        eval_dataset=val_dataset,                    # ADDED/MODIFIED
+        processing_class=tokenizer,                         # ADDED
+        data_collator=collator,                      # ADDED
         # train_dataset = train_dataset,
         # tokenizer = tokenizer,
         args=SFTConfig(
             dataset_text_field="text",
             max_seq_length=config.max_seq_length,
-            per_device_train_batch_size=config.per_device_train_batch_size,
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            warmup_steps=config.warmup_steps,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            warmup_steps=5,
             overwrite_output_dir=True,
-            warmup_ratio=config.warmup_ratio,
             # max_steps=60,
-            logging_steps=config.logging_steps,
+            logging_steps=30,
             output_dir=config.output_dir,
             optim=config.optim,
             seed=config.seed_val,
             num_train_epochs=config.num_epochs,
             save_strategy=config.save_strategy,
             save_steps=config.save_steps,
+            eval_strategy=config.eval_strategy,   
+            eval_steps=config.eval_steps,   
+            load_best_model_at_end=config.load_best_model_at_end,   
+            metric_for_best_model=config.metric_for_best_model,   
+            greater_is_better=config.greater_is_better,   
+            save_total_limit=config.save_total_limit,
+            dataloader_num_workers=8,
+            dataloader_pin_memory=True,
+            dataloader_persistent_workers=True,
+            group_by_length=True,   
         ),
     )
     if callback_samples > 0:
         callback = ExampleTrainerCallback(
-            some_tokenized_dataset=tokenized_eval,
+            some_tokenized_dataset=tokenized_val,  # use validation set
             # some_tokenized_dataset=tokenized_eval,
             tokenizer=tokenizer,
             max_length=config.max_seq_length,
@@ -607,6 +717,10 @@ def main(config_file=None):
         trainer.add_callback(callback)
     gpu_usage = PrintGPUUsageCallback()
     trainer.add_callback(gpu_usage)
+    trainer.add_callback(EarlyStoppingCallback(   
+        early_stopping_patience=config.early_stopping_patience,   
+        early_stopping_threshold=config.early_stopping_threshold,   
+    ))   
     trainer_stats = trainer.train()
     trainer.save_model(config.model_save_path)
     # model.save_pretrained(config.model_save_path)
@@ -619,6 +733,13 @@ def main(config_file=None):
     # )
     model = trainer.model
     FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
+
+    # ADDED: Set greedy decoding defaults with explicit stops (affects gen_atoms & generate)
+    model.generation_config.do_sample = False
+    model.generation_config.eos_token_id = tokenizer.eos_token_id
+    model.generation_config.pad_token_id = tokenizer.eos_token_id
+    model.generation_config.max_new_tokens = min(512, config.max_seq_length)
+
     # model, tokenizer, config = load_model(path=config.model_save_path)
     # batch_evaluate(
     #   prompts=[i["input"] for i in m_test],
