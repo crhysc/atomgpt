@@ -107,8 +107,6 @@ class TrainingPropConfig(BaseSettings):
     logging_steps: int = 10
 
 
-
-
 def get_input(config=None, chem="", val=10):
     if config.chem_info == "none":
         prefix = ""
@@ -381,7 +379,8 @@ def main(config_file=None):
         info = {}
         info["id"] = i[0]
         ids.append(i[0])
-        tmp = [float(j) for j in i[1:]]
+        tmp = [j for j in i[1:]]
+        # tmp = [float(j) for j in i[1:]]
         # print("tmp", tmp)
         if len(tmp) == 1:
             tmp = str(float(tmp[0]))

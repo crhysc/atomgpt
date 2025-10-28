@@ -492,7 +492,7 @@ def create_new_function(
         # Fallback to direct module loading
         if new_module is None:
             try:
-                module_name = f"unsloth_cache_{name}"
+                module_name = f"atomgpt_cache_{name}"
                 file_location = os.path.join(compile_folder, name) + ".py"
                 spec = importlib.util.spec_from_file_location(
                     module_name, file_location
