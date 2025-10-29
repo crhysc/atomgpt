@@ -83,7 +83,7 @@ def make_raman_record(
 
     fmt_f = f"{{0:.{freq_decimals}f}}"
     pairs = [
-        f"{fmt_f.format(float(freq))} cm^-1({format_fixed_decimals(float(act), activity_decimals)})"
+        f"{fmt_f.format(float(freq))} ({format_fixed_decimals(float(act), activity_decimals)})"
         for freq, act in zip(freqs_nz, acts_nz)
     ]
     raman_text = ", ".join(pairs)
@@ -92,7 +92,7 @@ def make_raman_record(
         "instruction": "Below is a description of a material.",
         "input": (
             f"The chemical formula is: {formula}.\n"
-            f"The Raman spectrum shows active modes with normalized intensities () at: {raman_text}.\n"
+            f"The Raman spectrum shows active modes in cm^-1 with normalized intensities () at: {raman_text}.\n"
             f"Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
         ),
         "output": get_crystal_string_t(atoms),
