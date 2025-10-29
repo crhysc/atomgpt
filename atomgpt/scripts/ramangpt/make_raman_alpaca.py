@@ -92,7 +92,7 @@ def make_raman_record(
         "instruction": "Below is a description of a material.",
         "input": (
             f"The chemical formula is: {formula}.\n"
-            f"The Raman spectrum shows active modes at: {raman_text}.\n"
+            f"The Raman spectrum shows active modes with normalized intensities () at: {raman_text}.\n"
             f"Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
         ),
         "output": get_crystal_string_t(atoms),
