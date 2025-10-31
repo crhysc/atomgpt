@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # make_raman_alpaca.py
 #
-# Read Raman JSON, keep only modes whose activity is non-zero AFTER rounding
-# to the requested precision (so "0.000000" modes are dropped), format values,
-# and write Alpaca-style train/test JSONs compatible with your finetuning script.
+# Read Raman JSON, optionally Niggli-reduce cells, keep only modes whose activity
+# is non-zero AFTER rounding to the requested precision, optionally normalize
+# frequencies to [0,1] (1.0 = max kept freq), format values, and write
+# Alpaca-style train/test JSONs.
 
 import argparse
 import json
@@ -34,6 +35,31 @@ def get_crystal_string_t(atoms: Atoms) -> str:
     return crystal_str
 
 
+def niggli_reduce_atoms(atoms: Atoms) -> Atoms:
+    """
+    Try to Niggli-reduce using pymatgen (preferred).
+    Falls back to returning the original atoms if reduction fails or pymatgen is absent.
+    """
+    try:
+        from pymatgen.core import Structure, Lattice  # lazy import
+        species = list(atoms.elements)  # per-site symbols
+        frac = np.array(atoms.frac_coords, dtype=float)
+        lat = np.array(atoms.lattice.matrix, dtype=float)
+        pmg = Structure(Lattice(lat), species, frac, coords_are_cartesian=False)
+
+        # Niggli reduction on the full structure (updates lattice + fractional coords)
+        reduced, _ = pmg.get_reduced_structure(reduction_algo="niggli")
+        return Atoms(
+            lattice_mat=np.array(reduced.lattice.matrix),
+            coords=np.array(reduced.frac_coords),
+            elements=[str(s) for s in reduced.species],
+            cartesian=False,
+        )
+    except Exception:
+        # Best-effort fallback: return original if anything goes wrong
+        return atoms
+
+
 def format_fixed_decimals(val: float, decimals: int = 6) -> str:
     """Format a number with fixed decimal places (handles scientific-notation inputs)."""
     try:
@@ -49,6 +75,8 @@ def make_raman_record(
     entry: dict,
     freq_decimals: int = 2,
     activity_decimals: int = 6,
+    normalize_freq: bool = False,
+    niggli: bool = False,
 ) -> dict | None:
     atoms_dict = entry.get("atoms")
     if not atoms_dict:
@@ -58,6 +86,10 @@ def make_raman_record(
         atoms = Atoms.from_dict(atoms_dict)
     except Exception:
         return None
+
+    # Optional Niggli reduction BEFORE anything else
+    if niggli:
+        atoms = niggli_reduce_atoms(atoms)
 
     try:
         formula = atoms.composition.reduced_formula
@@ -80,30 +112,45 @@ def make_raman_record(
         return None
 
     freqs_kept = freqs[keep_mask]
-    acts_kept = acts[keep_mask]
     acts_rounded_kept = acts_rounded[keep_mask]
 
-    # Sort by frequency
-    order = np.argsort(freqs_kept)
-    freqs_kept = freqs_kept[order]
-    acts_kept = acts_kept[order]
+    # Optional normalize frequencies to [0,1], with 1.0 = max kept frequency
+    if normalize_freq:
+        max_f = float(np.max(freqs_kept)) if freqs_kept.size else 0.0
+        if max_f > 0.0:
+            freqs_display = freqs_kept / max_f  # zero maps to 0.0, max -> 1.0
+        else:
+            freqs_display = np.zeros_like(freqs_kept)
+        freq_unit_caption = "normalized frequency 0–1"
+    else:
+        freqs_display = freqs_kept
+        freq_unit_caption = "cm^-1"
+
+    # Sort by *display* frequency so ordering matches what we print
+    order = np.argsort(freqs_display)
+    freqs_display = freqs_display[order]
+    freqs_kept = freqs_kept[order]  # keep original too, in case needed later
     acts_rounded_kept = acts_rounded_kept[order]
 
     # Format output strings
     fmt_f = f"{{0:.{freq_decimals}f}}"
     pairs = [
-        f"{fmt_f.format(float(freq))} ({format_fixed_decimals(float(act_r), activity_decimals)})"
-        for freq, act_r in zip(freqs_kept, acts_rounded_kept)
+        f"{fmt_f.format(float(fd))} ({format_fixed_decimals(float(act_r), activity_decimals)})"
+        for fd, act_r in zip(freqs_display, acts_rounded_kept)
     ]
     raman_text = ", ".join(pairs)
 
+    # Build prompt text
+    input_header = (
+        f"The chemical formula is: {formula}.\n"
+        f"The Raman spectrum shows active modes in {freq_unit_caption} "
+        f"with normalized intensities () at: {raman_text}.\n"
+        f"Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
+    )
+
     rec = {
         "instruction": "Below is a description of a material.",
-        "input": (
-            f"The chemical formula is: {formula}.\n"
-            f"The Raman spectrum shows active modes in cm^-1 with normalized intensities () at: {raman_text}.\n"
-            f"Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
-        ),
+        "input": input_header,
         "output": get_crystal_string_t(atoms),
         "id": entry.get("id", "na"),
         "raman_text": raman_text,
@@ -126,9 +173,13 @@ def main():
     p.add_argument("--test-out", type=Path, default=Path("alpaca_prop_test.json"),
                    help="Output path for test JSON.")
     p.add_argument("--freq-decimals", type=int, default=2,
-                   help="Decimals for frequencies in cm^-1 (default: 2).")
+                   help="Decimals for frequencies (cm^-1 or normalized), default: 2.")
     p.add_argument("--activity-decimals", type=int, default=6,
                    help="Decimals for Raman activities (default: 6).")
+    p.add_argument("--normalize-freq", action="store_true",
+                   help="Normalize frequencies to [0,1]; 1.0 = max kept frequency after intensity rounding.")
+    p.add_argument("--niggli-reduce", action="store_true",
+                   help="Apply Niggli reduction to each cell before partitioning into train/test.")
     args = p.parse_args()
 
     with args.raman_json.open("r", encoding="utf-8") as f:
@@ -140,6 +191,8 @@ def main():
             entry,
             freq_decimals=args.freq_decimals,
             activity_decimals=args.activity_decimals,
+            normalize_freq=args.normalize_freq,
+            niggli=args.niggli_reduce,
         )
         if rec is not None:
             records.append(rec)
@@ -147,6 +200,7 @@ def main():
     if not records:
         raise SystemExit("No valid records with nonzero Raman activity (after rounding) were found.")
 
+    # Shuffle & split AFTER optional Niggli reduction (as requested)
     rng = random.Random(args.seed)
     rng.shuffle(records)
     n_total = len(records)
