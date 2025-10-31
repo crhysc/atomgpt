@@ -8,6 +8,8 @@ import numpy as np
 from jarvis.core.atoms import Atoms
 import numpy as np
 from jarvis.core.atoms import Atoms
+import re
+from scipy.signal import find_peaks
 
 # from jarvis.analysis.diffraction.xrd import smooth_xrd
 from sklearn.metrics import mean_absolute_error
@@ -56,41 +58,6 @@ def recast_array(
     return x_new, y_new
 
 
-def recast_arrayYY(
-    x_original=[], y_original=[], x_new=np.arange(0, 90, 1), tol=0.1
-):
-    x_original = np.array(x_original)
-    # Initialize the new y array with NaNs or a default value
-    y_new = np.full_like(x_new, 0, dtype=np.float64)
-
-    # Fill the corresponding bins
-    for x_val, y_val in zip(x_original, y_original):
-        closest_index = np.abs(
-            x_new - x_val
-        ).argmin()  # Find the closest x_new index
-        y_new[closest_index] = y_val
-    # y_new[y_new<tol]=0
-    return x_new, y_new
-
-
-def recast_arrayOLD(x_original=[], y_original=[], x_new=[], tol=0.1):
-    """Recast original spectrum onto a new grid, accumulating close values."""
-    x_original = np.array(x_original)
-    y_original = np.array(y_original, dtype=np.float64)
-    y_new = np.zeros_like(x_new, dtype=np.float64)
-    x_new = np.array(x_new, dtype=np.float64)
-    indices = np.abs(x_new[:, np.newaxis] - x_original).argmin(axis=0)
-    np.add.at(y_new, indices, y_original)
-    # Accumulate intensities for sharpness preservation
-    # for x_val, y_val in zip(x_original, y_original):
-    #    closest_index = np.abs(x_new - x_val).argmin()
-    #    y_new[closest_index] += y_val
-
-    # Remove noise below tolerance level
-    # y_new[y_new < tol] = 0
-    return x_new, y_new
-
-
 def smooth_xrd(atoms=None, thetas=[0, 90], intvl=0.3, sep=";"):
     # def smooth_xrd(atoms=None, thetas=[0, 90], intvl=0.5):
     a, b, c = XRD(thetas=thetas).simulate(atoms=atoms)
@@ -107,172 +74,6 @@ def smooth_xrd(atoms=None, thetas=[0, 90], intvl=0.3, sep=";"):
     c_str = sep.join(["{0:.2f}".format(x) for x in c])
 
     return c_str, c
-
-
-def text2atomsNEW(response):
-    """
-    Converts text output into a JARVIS Atoms object.
-
-    Expected format:
-        First 3 lines: Lattice matrix rows (each with 3 float values)
-        Remaining lines: Element x y z (fractional coordinates)
-    """
-    try:
-        response = response.strip().strip("</s>").strip()
-        if not response:
-            raise ValueError("Empty response string")
-
-        tmp_atoms_array = [
-            line.strip() for line in response.split("\n") if line.strip()
-        ]
-        print("tmp_atoms_array", tmp_atoms_array)
-
-        # Expect at least 3 lines for lattice and 1 for atoms
-        if len(tmp_atoms_array) < 4:
-            raise ValueError(
-                "Not enough lines to define a 3x3 lattice and atomic structure."
-            )
-
-        # Parse 3 lines of 3 lattice values each
-        lattice_mat = []
-        for i in range(3):
-            row = list(map(float, tmp_atoms_array[i].split()))
-            if len(row) != 3:
-                raise ValueError(
-                    f"Lattice row {i+1} must have 3 float values, got: {row}"
-                )
-            lattice_mat.append(row)
-
-        print("lattice_mat", lattice_mat)
-
-        elements = []
-        coords = []
-
-        # Parse atomic lines
-        for line in tmp_atoms_array[3:]:
-            parts = line.split()
-            if len(parts) >= 4:
-                elements.append(parts[0])
-                coords.append(
-                    [float(parts[1]), float(parts[2]), float(parts[3])]
-                )
-            else:
-                print(f"⚠️ Skipping malformed atom line: {line}")
-
-        if len(elements) == 0 or len(coords) == 0:
-            raise ValueError("No valid atomic data found.")
-
-        atoms = Atoms(
-            coords=coords,
-            elements=elements,
-            lattice_mat=lattice_mat,
-            cartesian=False,
-        )
-        print("atoms", atoms)
-        return atoms
-
-    except Exception as e:
-        print(f"❌ Failed to parse atoms from response: {e}")
-        raise
-
-
-def text2atomsXXXXX(response):
-    """
-    Converts text output into a JARVIS Atoms object.
-
-    Expected format:
-        Line 1: (optional) blank
-        Line 2: 9 lattice numbers (3x3 matrix)
-        Remaining lines: Element x y z (fractional coordinates)
-    """
-    try:
-        response = response.strip().strip("</s>").strip()
-        if not response:
-            raise ValueError("Empty response string")
-
-        tmp_atoms_array = [
-            line.strip() for line in response.split("\n") if line.strip()
-        ]
-        print("tmp_atoms_array", tmp_atoms_array)
-
-        # Expect at least one line for lattice and one for atoms
-        if len(tmp_atoms_array) < 2:
-            raise ValueError("Not enough lines to define structure.")
-
-        # Detect and parse lattice line
-        lat_line = tmp_atoms_array[0]
-        lat_values = lat_line.split()
-        if len(lat_values) != 9:
-            raise ValueError(
-                "Lattice line must contain exactly 9 float values.", lat_values
-            )
-
-        lattice_mat = np.array(lat_values, dtype=float).reshape(3, 3).tolist()
-        print("lattice_mat", lattice_mat)
-
-        elements = []
-        coords = []
-
-        # Parse atomic lines
-        for line in tmp_atoms_array[1:]:
-            parts = line.split()
-            if len(parts) >= 4:
-                elements.append(parts[0])
-                coords.append(
-                    [float(parts[1]), float(parts[2]), float(parts[3])]
-                )
-            else:
-                print(f"⚠️ Skipping malformed atom line: {line}")
-
-        if len(elements) == 0 or len(coords) == 0:
-            raise ValueError("No valid atomic data found.")
-
-        atoms = Atoms(
-            coords=coords,
-            elements=elements,
-            lattice_mat=lattice_mat,
-            cartesian=False,
-        )
-        print("atoms", atoms)
-        return atoms
-
-    except Exception as e:
-        print(f"❌ Failed to parse atoms from response: {e}")
-        raise
-
-
-def text2atomsold(response):
-    # print("response", response)
-    response = response.strip("</s>")
-    if response.startswith("\n"):
-        subs = 0
-    else:
-        subs = 1
-    tmp_atoms_array = response.split("\n")
-    print("tmp_atoms_array", tmp_atoms_array)
-    print("lat", tmp_atoms_array[1 - subs].split())
-    lattice_mat = (
-        np.array(tmp_atoms_array[1 - subs].split(), dtype="float")
-        .reshape(3, 3)
-        .tolist()
-    )
-    print("lat2", lattice_mat)
-    elements = []
-    coords = []
-    for ii, i in enumerate(tmp_atoms_array):
-        if ii > 2 - subs and ii < len(tmp_atoms_array) - subs:
-
-            tmp = i.split()
-            if len(tmp) > 2:
-                elements.append(tmp[0])
-                coords.append([float(tmp[1]), float(tmp[2]), float(tmp[3])])
-    atoms = Atoms(
-        coords=coords,
-        elements=elements,
-        lattice_mat=lattice_mat,
-        cartesian=False,
-    )
-    return atoms
 
 
 def text2atoms(response):
@@ -387,59 +188,6 @@ def get_crystal_string_t(atoms):
         " ".join(["{0:.2f}".format(x) for x in lengths])
         + "\n"
         + " ".join([str(int(x)) for x in angles])
-        + "\n"
-        + "\n".join(
-            [
-                str(t) + " " + " ".join(["{0:.3f}".format(x) for x in c])
-                for t, c in zip(atom_ids, frac_coords)
-            ]
-        )
-    )
-
-    # crystal_str = atoms_describer(atoms) + "\n*\n" + crystal_str
-    return crystal_str
-
-
-def get_crystal_string_tNEW(atoms):
-    lengths = atoms.lattice.abc
-    angles = atoms.lattice.angles
-    atom_ids = atoms.elements
-    frac_coords = atoms.frac_coords
-    lat_mat = np.array(atoms.lattice_mat)
-
-    # Clean string formatting for lattice matrix
-    lat_mat_str = "\n".join(
-        " ".join(f"{0.0 if abs(x) < 1e-6 else x:.2f}" for x in row)
-        for row in lat_mat
-    )
-
-    # Assemble full crystal structure string
-    crystal_str = (
-        lat_mat_str
-        + "\n"
-        + "\n".join(
-            f"{t} " + " ".join(f"{x:.3f}" for x in c)
-            for t, c in zip(atom_ids, frac_coords)
-        )
-    )
-
-    return crystal_str
-
-
-def get_crystal_string_tOSOSOSO(atoms):
-    lengths = atoms.lattice.abc  # structure.lattice.parameters[:3]
-    angles = atoms.lattice.angles
-    atom_ids = atoms.elements
-    frac_coords = atoms.frac_coords
-    lat_mat = np.array(atoms.lattice_mat)
-    # lat_mat = "\n".join(" ".join(f"{x:.2f}" for x in row) for row in lat_mat)
-    lat_mat_str = "\n".join(
-        " ".join(f"{0.0 if abs(x) < 1e-6 else x:.2f}" for x in row)
-        for row in lat_mat
-    )
-
-    crystal_str = (
-        lat_mat
         + "\n"
         + "\n".join(
             [
@@ -754,10 +502,11 @@ def load_exp_file(
         filename,
         skiprows=1,
         # sep=r"[ ,]+",
-        sep=r"[,\t ]+",
+        # sep=r"[,\t ]+",
+        sep=None,
+        engine="python",
         names=["X", "Y"],
         comment="#",
-        engine="python",
     )
 
     # df = pd.read_csv(filename, skiprows=1, sep=" ", names=["X", "Y"], comment="#")
@@ -771,19 +520,20 @@ def load_exp_file(
         for i in lines:
             if "##IDEAL CHEMISTRY=" in i:
                 if formula is None:
-                    formula = Composition.from_string(
-                        i.split("##IDEAL CHEMISTRY=")[1]
-                        .replace("_", "")
-                        .replace("^", "")
-                        .replace("+", "")
-                    ).reduced_formula
+                    ideal_chemistry = i.split("IDEAL CHEMISTRY=")[1]
+                    formula = ideal_chemistry.split(";")[0].strip()
+                    formula = re.sub(r"\^[0-9]*[+-]\^", "", formula)
+                    formula = formula.replace("&#183;", "·")
+                    formula = formula.replace("_", "")
 
-                    tmp = (
-                        i.split("##IDEAL CHEMISTRY=")[1]
-                        .replace("_", "")
-                        .split("&#")[0]
-                    )
-                    formula = parse_formula(tmp)
+                    formula = Composition.from_string(formula).reduced_formula
+
+                    # tmp = (
+                    #    i.split("##IDEAL CHEMISTRY=")[1]
+                    #    .replace("_", "")
+                    #    .split("&#")[0]
+                    # )
+                    # formula = parse_formula(tmp)
                     # print(formula, i)
 
     else:
@@ -797,10 +547,64 @@ def load_exp_file(
     #     y = df["Z"].values
     y = np.array(y, dtype="float")
     y = y / np.max(y)
-    x, y_corrected = processed(
-        x=x, y=y, intvl=intvl, background_subs=background_subs, tol=tol
+
+    step_size = df["X"].iloc[1] - df["X"].iloc[0]
+    min_peak_separation_degrees = 0.5
+    distance = int(min_peak_separation_degrees / step_size)
+    print("distance", distance)
+    if distance < 1:
+        distance = 1
+    print(f"Step size: {step_size:.4f}°")
+    num_peaks = 20
+    peaks, props = find_peaks(
+        y,
+        height=0.05,  # At least 5% of max intensity
+        # height=0.08,  # At least 5% of max intensity
+        prominence=0.02,  # Must stand out by 2%
+        # prominence=0.02,  # Must stand out by 2%
+        distance=distance,  # At least 0.5° apart
     )
-    return formula, x, y_corrected
+
+    print(f"Found {len(peaks)} peaks")
+
+    # print("peaks",peaks)
+    # Get top N peaks by intensity
+    top_indices = np.argsort(props["peak_heights"])[::-1][:num_peaks]
+    top_peaks = peaks[top_indices]
+    two_theta = df["X"].values
+    intensity_norm = y
+    top_peaks_sorted = top_peaks[np.argsort(two_theta[top_peaks])]
+
+    # Create list of (2θ, intensity)
+
+    # Get top 20 peaks by intensity
+    if len(peaks) > num_peaks:
+        top_indices = np.argsort(props["peak_heights"])[::-1][:num_peaks]
+        peaks = peaks[top_indices]
+        peaks = peaks[np.argsort(df["X"].iloc[peaks])]  # Sort by position
+
+    peak_list = [
+        (round(two_theta[p], 2), round(intensity_norm[p], 2))
+        for p in top_peaks_sorted
+    ]
+
+    # peak_text = ", ".join([f"{t}°({i})" for t, i in peak_list]])
+    peak_text = ", ".join([f"{t}°({i})" for t, i in peak_list])
+    prompt = (
+        "The chemical formula is: "
+        + formula
+        + "\n"
+        + "The XRD pattern shows main peaks at: "
+        + peak_text
+        + "\n"
+        + "Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
+    )
+
+    # x, y_corrected = processed(
+    #    x=x, y=y, intvl=intvl, background_subs=background_subs, tol=tol
+    # )
+    # return formula, x, y_corrected
+    return formula, x, peak_text
 
 
 def post_patch_loss_function(model):

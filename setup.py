@@ -8,9 +8,9 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="atomgpt",
-    version="2025.6.7",
+    version="2025.10.7",
     author="Kamal Choudhary",
-    author_email="kamal.choudhary@nist.gov",
+    author_email="kchoudh2@jhu.edu",
     description="atomgpt",
     install_requires=requirements,
     entry_points={
@@ -23,7 +23,7 @@ setuptools.setup(
     },
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/usnistgov/atomgpt",
+    url="https://github.com/atomgptlab/atomgpt",
     packages=setuptools.find_packages(),
     license_file="LICENSE.rst",
     classifiers=[

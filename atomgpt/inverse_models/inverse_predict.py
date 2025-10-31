@@ -199,7 +199,7 @@ def predict(
                 background_subs=background_subs,
             )
             # y[y < 0.1] = 0
-            y_new_str = "\n".join(["{0:.2f}".format(x) for x in y])
+            y_new_str = y  # "\n".join(["{0:.2f}".format(x) for x in y])
             try:
                 if ".dat" in i:
                     formula = str(_formula.split("/")[-1].split(".dat")[0])
