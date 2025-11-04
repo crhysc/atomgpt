@@ -18,21 +18,37 @@ from jarvis.db.jsonutils import dumpjson
 
 
 def get_crystal_string_t(atoms: Atoms) -> str:
-    lengths = atoms.lattice.abc
-    angles = atoms.lattice.angles
-    atom_ids = atoms.elements
-    frac_coords = atoms.frac_coords
-    crystal_str = (
-        " ".join("{0:.2f}".format(x) for x in lengths)
-        + "\n"
-        + " ".join(str(int(x)) for x in angles)
-        + "\n"
-        + "\n".join(
-            f"{t} " + " ".join("{0:.3f}".format(x) for x in c)
-            for t, c in zip(atom_ids, frac_coords)
-        )
+    # Lattice
+    lengths = np.array(atoms.lattice.abc, dtype=float).ravel()
+    angles  = np.array(atoms.lattice.angles, dtype=float).ravel()
+
+    # Per-site species and fractional coordinates; force shape (N, 3)
+    atom_ids = [str(x) for x in list(atoms.elements)]
+    frac = np.asarray(atoms.frac_coords, dtype=float)
+    if frac.ndim == 1:
+        if frac.size == 3:
+            frac = frac.reshape(1, 3)
+        else:
+            raise ValueError(f"Unexpected fractional coord shape: {frac.shape}")
+    elif frac.ndim == 2 and frac.shape[1] != 3:
+        raise ValueError(f"Expected frac coords with 3 columns, got {frac.shape}")
+
+    # If species length doesn't match coords, broadcast a single species tag
+    if len(atom_ids) != len(frac):
+        if len(atom_ids) == 1 and len(frac) > 1:
+            atom_ids = atom_ids * len(frac)
+        else:
+            raise ValueError(
+                f"Elements length ({len(atom_ids)}) != coords length ({len(frac)})"
+            )
+
+    lengths_str = " ".join(f"{x:.2f}" for x in lengths.tolist())
+    angles_str  = " ".join(f"{x:.2f}" for x in angles.tolist())
+    coords_str  = "\n".join(
+        f"{t} " + " ".join(f"{c:.3f}" for c in row.tolist())
+        for t, row in zip(atom_ids, frac)
     )
-    return crystal_str
+    return f"{lengths_str}\n{angles_str}\n{coords_str}"
 
 
 def niggli_reduce_atoms(atoms: Atoms) -> Atoms:
@@ -77,6 +93,7 @@ def make_raman_record(
     activity_decimals: int = 6,
     normalize_freq: bool = False,
     niggli: bool = False,
+    include_max_freq: bool = False,
 ) -> dict | None:
     atoms_dict = entry.get("atoms")
     if not atoms_dict:
@@ -115,8 +132,8 @@ def make_raman_record(
     acts_rounded_kept = acts_rounded[keep_mask]
 
     # Optional normalize frequencies to [0,1], with 1.0 = max kept frequency
+    max_f = float(np.max(freqs_kept)) if freqs_kept.size else 0.0
     if normalize_freq:
-        max_f = float(np.max(freqs_kept)) if freqs_kept.size else 0.0
         if max_f > 0.0:
             freqs_display = freqs_kept / max_f  # zero maps to 0.0, max -> 1.0
         else:
@@ -141,10 +158,17 @@ def make_raman_record(
     raman_text = ", ".join(pairs)
 
     # Build prompt text
+    extra_norm_line = ""
+    if normalize_freq and include_max_freq and max_f > 0.0:
+        extra_norm_line = (
+            f"\nNormalization reference: 1.00 corresponds to "
+            f"{fmt_f.format(max_f)} cm^-1."
+        )
+
     input_header = (
         f"The chemical formula is: {formula}.\n"
         f"The Raman spectrum shows active modes in {freq_unit_caption} "
-        f"with normalized intensities () at: {raman_text}.\n"
+        f"with normalized intensities () at: {raman_text}.{extra_norm_line}\n"
         f"Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
     )
 
@@ -155,6 +179,8 @@ def make_raman_record(
         "id": entry.get("id", "na"),
         "raman_text": raman_text,
     }
+    if normalize_freq and include_max_freq:
+        rec["max_freq_cm"] = float(max_f)
     return rec
 
 
@@ -178,6 +204,8 @@ def main():
                    help="Decimals for Raman activities (default: 6).")
     p.add_argument("--normalize-freq", action="store_true",
                    help="Normalize frequencies to [0,1]; 1.0 = max kept frequency after intensity rounding.")
+    p.add_argument("--include-max-freq", action="store_true",
+                   help="When used with --normalize-freq, include the unnormalized max frequency (that maps to 1.0) in the prompt.")
     p.add_argument("--niggli-reduce", action="store_true",
                    help="Apply Niggli reduction to each cell before partitioning into train/test.")
     args = p.parse_args()
@@ -193,6 +221,7 @@ def main():
             activity_decimals=args.activity_decimals,
             normalize_freq=args.normalize_freq,
             niggli=args.niggli_reduce,
+            include_max_freq=args.include_max_freq,
         )
         if rec is not None:
             records.append(rec)
