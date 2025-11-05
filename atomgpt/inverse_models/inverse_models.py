@@ -569,10 +569,12 @@ def main(config_file=None):
     train_dataset = train_dataset.map(
         formatting_prompts_func_with_prompt,
         batched=True,
+        num_proc=config.dataset_num_proc
     )
     eval_dataset = eval_dataset.map(
         formatting_prompts_func_with_prompt,
         batched=True,
+        num_proc=config.dataset_num_proc
     )
     # Compute the actual max sequence length in raw text
     lengths = [
@@ -582,8 +584,8 @@ def main(config_file=None):
     max_seq_length = max(lengths)
     print(f"🧠 Suggested max_seq_length based on dataset: {max_seq_length}")
 
-    tokenized_train = train_dataset.map(tokenize_function, batched=True)
-    tokenized_eval = eval_dataset.map(tokenize_function, batched=True)
+    tokenized_train = train_dataset.map(tokenize_function, batched=True, num_proc=config.dataset_num_proc)
+    tokenized_eval = eval_dataset.map(tokenize_function, batched=True, num_proc=config.dataset_num_proc)
     tokenized_train.set_format(
         type="torch", columns=["input_ids", "attention_mask", "output"]
     )
