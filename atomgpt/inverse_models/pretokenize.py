@@ -76,7 +76,7 @@ class PretokConfig(BaseModel):
 def make_pretok_config(config, dir=None):
     pretok_dict = {
         "id_prop_path": config.id_prop_path,
-        "tokenizer_class": config.tokenizer_class,
+        "tokenizer_class": config.model_name,
         "num_train": config.num_train,
         "num_test": config.num_test,
         "test_ratio": config.test_ratio,
