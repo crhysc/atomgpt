@@ -6,6 +6,7 @@ from atomgpt.inverse_models._utils import (
     USE_MODELSCOPE,
     get_transformers_model_type,
 )
+from atomgpt.inverse_models.gpt_oss import FastGptOssModel
 from atomgpt.inverse_models.granite import FastGraniteModel
 from atomgpt.inverse_models.llama import FastLlamaModel, logger
 from atomgpt.inverse_models.mistral import FastMistralModel
@@ -44,6 +45,7 @@ SUPPORTS_LLAMA32 = transformers_version > Version("4.45.0")
 SUPPORTS_GRANITE = transformers_version >= Version("4.46.0")
 SUPPORTS_QWEN3 = transformers_version >= Version("4.50.3")
 SUPPORTS_QWEN3_MOE = transformers_version >= Version("4.50.3")
+SUPPORTS_GPT_OSS = transformers_version >= Version("4.55.0")
 if SUPPORTS_GEMMA:
     from atomgpt.inverse_models.gemma import FastGemmaModel
 if SUPPORTS_GEMMA2:
@@ -294,6 +296,17 @@ class FastLanguageModel(FastLlamaModel):
                     f"to obtain the latest transformers build, then restart this session."
                 )
             dispatch_model = FastGemmaModel
+        elif model_type == "gpt_oss":
+            if not SUPPORTS_GPT_OSS:
+                raise ImportError(
+                    f"AtomGPT: Your transformers version of {transformers_version} "
+                    f"does not support GPT-OSS.\n"
+                    f"The minimum required version is 4.55.0.\n"
+                    f'Try `pip install --upgrade "transformers>=4.55.0"`\n'
+                    f"to obtain the latest compatible transformers build, then "
+                    f"restart this session."
+                )
+            dispatch_model = FastGptOssModel
         elif model_type == "gemma2":
             if not SUPPORTS_GEMMA2:
                 raise ImportError(
