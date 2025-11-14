@@ -105,6 +105,7 @@ class TrainingPropConfig(BaseSettings):
     # families will tokenize text differntly. this field allows users to keep track of how their data
     # has been tokenized.
     tokenizer_class: str = "Mistral-LoRA-4b_quantized"
+    dataloader_num_workers: int = 1
 
 
 def get_input(config=None, chem="", val=10):
@@ -615,9 +616,11 @@ def main(config_file=None):
             output_dir=config.output_dir,
             optim=config.optim,
             seed=config.seed_val,
+            dataloader_num_workers=config.dataloader_num_workers,
             num_train_epochs=config.num_epochs,
             save_strategy=config.save_strategy,
             save_steps=config.save_steps,
+            disable_tqdm=False
         ),
     )
     if callback_samples > 0:
