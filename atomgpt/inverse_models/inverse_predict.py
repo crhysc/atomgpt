@@ -79,13 +79,10 @@ def relax_atoms(
 
     calculator = AlignnAtomwiseCalculator(path=default_path(), device="cpu")
     t1 = time.time()
-    # if calculator is None:
-    #  return atoms
     ase_atoms = atoms.ase_converter()
     ase_atoms.calc = calculator
 
     ase_atoms = ExpCellFilter(ase_atoms, constant_volume=constant_volume)
-    # TODO: Make it work with any other optimizer
     dyn = FIRE(ase_atoms)
     dyn.run(fmax=fmax, steps=nsteps)
     en = ase_atoms.atoms.get_potential_energy()
@@ -111,8 +108,8 @@ def predict(
     prop_val=None,
     dtype=None,
     max_seq_length=1058,
-    load_in_4bit=None,
-    verbose=True,
+    load_in_4bit=None,  # temp_config["load_in_4bit"]
+    verbose=True,  # temp_config["load_in_4bit"]
 ):
     print("config_path", config_path)
     if output_dir is not None:
@@ -139,6 +136,7 @@ def predict(
         pprint.pprint(temp_config)
     if model_name is None:
         model_name = temp_config["model_name"]
+    # output_dir = temp_config["output_dir"]
     if load_in_4bit is None:
         load_in_4bit = temp_config["load_in_4bit"]
 
@@ -146,7 +144,6 @@ def predict(
         print("Model used:", model_name)
         print("config used:", config_path)
         print("formula:", formula)
-
     model = None
     tokenizer = None
     try:
@@ -158,28 +155,29 @@ def predict(
             device_map="auto",
         )
         FastLanguageModel.for_inference(model)
-    except Exception:
+    except:
         tokenizer = AutoTokenizer.from_pretrained(
             model_name, gguf_file=filename
         )
         model = AutoModelForCausalLM.from_pretrained(
             model_name, gguf_file=filename
         )
-
+        pass
     atoms_arr = []
     lines = []
     if formula is None:
-        with open(pred_csv, "r") as f:
-            lines = f.read().splitlines()
+        # if dat_path is None:
+        f = open(pred_csv, "r")
+        lines = f.read().splitlines()
+        f.close()
     else:
         if dat_path is not None:
             lines = [dat_path]
-        else:
-            lines = [formula]
+        lines = [formula]
 
     mem = []
 
-    for idx, i in enumerate(lines):
+    for i in lines:
         prompt = i
         if ".dat" in i or dat_path is not None:
             if dat_path is None:
@@ -222,74 +220,47 @@ def predict(
                 )
 
         if verbose:
-            print(f"[{idx}] prompt:", prompt.replace("\n", ","))
+            print("prompt here", prompt.replace("\n", ","))
 
-        info = {"prompt": prompt}
-        gen_mat = None
+        gen_mat = gen_atoms(
+            prompt=prompt,
+            model=model,
+            tokenizer=tokenizer,
+            alpaca_prompt=temp_config["alpaca_prompt"],
+            instruction=temp_config["instruction"],
+            device=device,
+        )
 
-        # --- NEW: robust error handling around generation / structure use ---
-        try:
-            gen_mat = gen_atoms(
-                prompt=prompt,
-                model=model,
-                tokenizer=tokenizer,
-                alpaca_prompt=temp_config["alpaca_prompt"],
-                instruction=temp_config["instruction"],
-                device=device,
-            )
-
-            if verbose:
-                print(f"[{idx}] gen atoms:", gen_mat)
-                # spacegroup() can fail for broken structures, so guard it
-                try:
-                    print(f"[{idx}] gen atoms spacegroup:", gen_mat.spacegroup())
-                except Exception as e_sg:
-                    print(
-                        f"[WARN] Failed to compute spacegroup for sample {idx}: {e_sg}"
-                    )
-
-            if relax:
-                try:
-                    gen_mat = relax_atoms(atoms=gen_mat)
-                    if verbose:
-                        print(
-                            f"[{idx}] gen atoms relax:",
-                            gen_mat,
-                            gen_mat.spacegroup(),
-                        )
-                except Exception as e_relax:
-                    print(
-                        f"[WARN] Relaxation failed for sample {idx}, "
-                        "continuing with unrelaxed structure."
-                    )
-                    print(traceback.format_exc())
-
-            # this is another common crash point if gen_mat is invalid
-            atoms_dict = gen_mat.to_dict()
-            atoms_arr.append(atoms_dict)
-            info["atoms"] = atoms_dict
-
-        except Exception as e:
+        if gen_mat is None:
             print(
-                f"[ERROR] Failed to generate a valid structure for sample {idx} "
-                f"(input: {i}): {e}"
+                "The returned structure is invalid. Here is the output:",
+                gen_mat,
             )
-            # optional: print full traceback for debugging
-            print(traceback.format_exc())
-            info["error"] = str(e)
-            # do NOT re-raise; just skip this structure and move on
+            info = {}
+            info["prompt"] = prompt
+            info["error"] = "Invalid structure returned by AtomGPT (None)."
             mem.append(info)
+            # skip the rest of the loop for this entry
             continue
 
+        if verbose:
+            print("gen atoms", gen_mat)
+            print("gen atoms spacegroup", gen_mat.spacegroup())
+            print("intvl", intvl)
+        if relax:
+            gen_mat = relax_atoms(atoms=gen_mat)
+            if verbose:
+                print("gen atoms relax", gen_mat, gen_mat.spacegroup())
+        atoms_arr.append(gen_mat.to_dict())
+        info = {}
+        info["prompt"] = prompt
+        info["atoms"] = gen_mat.to_dict()
         mem.append(info)
-
     dumpjson(data=mem, filename=fname)
     return model, tokenizer, temp_config
 
 
 if __name__ == "__main__":
-    # output_dir = make_id_prop()
-    # output_dir="."
     args = parser.parse_args(sys.argv[1:])
     print("args.config_path", args.config_path)
     predict(
@@ -302,5 +273,4 @@ if __name__ == "__main__":
         config_path=args.config_path,
         prop_val=args.prop_val,
         background_subs=args.background_subs,
-        # config_name=args.config_name,
     )
