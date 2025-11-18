@@ -111,12 +111,9 @@ def predict(
     prop_val=None,
     dtype=None,
     max_seq_length=1058,
-    load_in_4bit=None,  # temp_config["load_in_4bit"]
-    verbose=True,  # temp_config["load_in_4bit"]
+    load_in_4bit=None,
+    verbose=True,
 ):
-    # if not os.path.exists("config_name"):
-
-    #    config_name=os.path.join(output_dir,"config.json")
     print("config_path", config_path)
     if output_dir is not None:
         config_name = os.path.join(output_dir, "config.json")
@@ -125,7 +122,7 @@ def predict(
             config_name = os.path.join(parent, "config.json")
         adapter = os.path.join(output_dir, "adapter_config.json")
         if os.path.exists(adapter):
-            model_name = output_dir  # temp_config["model_name"]
+            model_name = output_dir
     if config_path is not None:
         config_name = config_path
         if verbose:
@@ -142,7 +139,6 @@ def predict(
         pprint.pprint(temp_config)
     if model_name is None:
         model_name = temp_config["model_name"]
-    # output_dir = temp_config["output_dir"]
     if load_in_4bit is None:
         load_in_4bit = temp_config["load_in_4bit"]
 
@@ -150,6 +146,7 @@ def predict(
         print("Model used:", model_name)
         print("config used:", config_path)
         print("formula:", formula)
+
     model = None
     tokenizer = None
     try:
@@ -161,29 +158,28 @@ def predict(
             device_map="auto",
         )
         FastLanguageModel.for_inference(model)
-    except:
+    except Exception:
         tokenizer = AutoTokenizer.from_pretrained(
             model_name, gguf_file=filename
         )
         model = AutoModelForCausalLM.from_pretrained(
             model_name, gguf_file=filename
         )
-        pass
+
     atoms_arr = []
     lines = []
     if formula is None:
-        # if dat_path is None:
-        f = open(pred_csv, "r")
-        lines = f.read().splitlines()
-        f.close()
+        with open(pred_csv, "r") as f:
+            lines = f.read().splitlines()
     else:
         if dat_path is not None:
             lines = [dat_path]
-        lines = [formula]
+        else:
+            lines = [formula]
 
     mem = []
 
-    for i in lines:
+    for idx, i in enumerate(lines):
         prompt = i
         if ".dat" in i or dat_path is not None:
             if dat_path is None:
@@ -198,21 +194,18 @@ def predict(
                 formula=formula,
                 background_subs=background_subs,
             )
-            # y[y < 0.1] = 0
-            y_new_str = y  # "\n".join(["{0:.2f}".format(x) for x in y])
+            y_new_str = y
             try:
                 if ".dat" in i:
                     formula = str(_formula.split("/")[-1].split(".dat")[0])
             except Exception:
                 pass
-            # gen_mat = main_spectra(spectra=[[y_new_str,y]],formulas=[formula],model=model,tokenizer=tokenizer,device='cuda')[0]
             prompt = (
                 "The chemical formula is "
                 + formula
                 + " The "
                 + temp_config["prop"]
                 + " is "
-                # + " The XRD is "
                 + y_new_str
                 + ". Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
             )
@@ -224,34 +217,72 @@ def predict(
                     + " The "
                     + temp_config["prop"]
                     + " is "
-                    # + " The XRD is "
                     + str(prop_val)
                     + ". Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
                 )
 
         if verbose:
-            print("prompt here", prompt.replace("\n", ","))
-        gen_mat = gen_atoms(
-            prompt=prompt,
-            model=model,
-            tokenizer=tokenizer,
-            alpaca_prompt=temp_config["alpaca_prompt"],
-            instruction=temp_config["instruction"],
-            device=device,
-        )
-        if verbose:
-            print("gen atoms", gen_mat)
-            print("gen atoms spacegroup", gen_mat.spacegroup())
-            print("intvl", intvl)
-        if relax:
-            gen_mat = relax_atoms(atoms=gen_mat)
+            print(f"[{idx}] prompt:", prompt.replace("\n", ","))
+
+        info = {"prompt": prompt}
+        gen_mat = None
+
+        # --- NEW: robust error handling around generation / structure use ---
+        try:
+            gen_mat = gen_atoms(
+                prompt=prompt,
+                model=model,
+                tokenizer=tokenizer,
+                alpaca_prompt=temp_config["alpaca_prompt"],
+                instruction=temp_config["instruction"],
+                device=device,
+            )
+
             if verbose:
-                print("gen atoms relax", gen_mat, gen_mat.spacegroup())
-        atoms_arr.append(gen_mat.to_dict())
-        info = {}
-        info["prompt"] = prompt
-        info["atoms"] = gen_mat.to_dict()
+                print(f"[{idx}] gen atoms:", gen_mat)
+                # spacegroup() can fail for broken structures, so guard it
+                try:
+                    print(f"[{idx}] gen atoms spacegroup:", gen_mat.spacegroup())
+                except Exception as e_sg:
+                    print(
+                        f"[WARN] Failed to compute spacegroup for sample {idx}: {e_sg}"
+                    )
+
+            if relax:
+                try:
+                    gen_mat = relax_atoms(atoms=gen_mat)
+                    if verbose:
+                        print(
+                            f"[{idx}] gen atoms relax:",
+                            gen_mat,
+                            gen_mat.spacegroup(),
+                        )
+                except Exception as e_relax:
+                    print(
+                        f"[WARN] Relaxation failed for sample {idx}, "
+                        "continuing with unrelaxed structure."
+                    )
+                    print(traceback.format_exc())
+
+            # this is another common crash point if gen_mat is invalid
+            atoms_dict = gen_mat.to_dict()
+            atoms_arr.append(atoms_dict)
+            info["atoms"] = atoms_dict
+
+        except Exception as e:
+            print(
+                f"[ERROR] Failed to generate a valid structure for sample {idx} "
+                f"(input: {i}): {e}"
+            )
+            # optional: print full traceback for debugging
+            print(traceback.format_exc())
+            info["error"] = str(e)
+            # do NOT re-raise; just skip this structure and move on
+            mem.append(info)
+            continue
+
         mem.append(info)
+
     dumpjson(data=mem, filename=fname)
     return model, tokenizer, temp_config
 
