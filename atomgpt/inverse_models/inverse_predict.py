@@ -233,7 +233,7 @@ def predict(
 
         if gen_mat is None:
             print(
-                "The structure returned by gen_mat() is not a valid crystal structure.
+                "The structure returned by gen_mat() is not a valid crystal structure."
             )
             info = {}
             info["prompt"] = prompt
