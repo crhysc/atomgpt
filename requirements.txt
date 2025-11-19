@@ -104,7 +104,7 @@ toolz==1.0.0
 torch==2.7.0
 torchvision==0.22.0
 tqdm==4.67.1
-transformers==4.51.3
+transformers==4.57.1
 triton==3.3.0
 trl==0.15.2
 typeguard==4.4.2
