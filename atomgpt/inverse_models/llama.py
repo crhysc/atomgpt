@@ -2012,11 +2012,28 @@ def unsloth_fast_generate(
 
     # For newer HF
     kwargs["cache_implementation"] = "dynamic"
-    # For num_logits_to_keep
-    num_logits_to_keep = kwargs.get("num_logits_to_keep", None)
-    logits_to_keep = kwargs.get("logits_to_keep", None)
-    if num_logits_to_keep is None and logits_to_keep is None:
-        kwargs["num_logits_to_keep"] = 1
+    
+    # For num_logits_to_keep: only use it if the model forward actually supports it
+    import inspect
+
+    try:
+        forward_sig = inspect.signature(self.forward)
+        supports_num_logits = (
+            "num_logits_to_keep" in forward_sig.parameters
+            or "logits_to_keep" in forward_sig.parameters
+        )
+    except (TypeError, ValueError):
+        supports_num_logits = False
+
+    if supports_num_logits:
+        num_logits_to_keep = kwargs.get("num_logits_to_keep", None)
+        logits_to_keep = kwargs.get("logits_to_keep", None)
+        if num_logits_to_keep is None and logits_to_keep is None:
+            kwargs["num_logits_to_keep"] = 1
+    else:
+        # Make sure we don't pass these through to HF generate for models that don't support them
+        kwargs.pop("num_logits_to_keep", None)
+        kwargs.pop("logits_to_keep", None)
 
     # Remove token_type_ids
     kwargs.pop("token_type_ids", None)
