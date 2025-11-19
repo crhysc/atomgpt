@@ -461,12 +461,12 @@ class FastLanguageModel(FastLlamaModel):
         pass
 
         if load_in_4bit:
-            # Fix up bitsandbytes config
+            # Fix up bitsandbytes config, robust to missing torch_dtype.
+            # Use the same helper we use elsewhere.
+            compute_dtype = _get_dtype(dtype)  # falls back to bf16/fp16 based on hardware
+
             quantization_config = {
-                # Sometimes torch_dtype is not a string!!
-                "bnb_4bit_compute_dtype": model.config.to_dict()[
-                    "torch_dtype"
-                ],
+                "bnb_4bit_compute_dtype": compute_dtype,
                 "bnb_4bit_quant_type": "nf4",
                 "bnb_4bit_use_double_quant": True,
                 "llm_int8_enable_fp32_cpu_offload": False,
@@ -478,6 +478,7 @@ class FastLanguageModel(FastLlamaModel):
                 "quant_method": "bitsandbytes",
             }
             model.config.update({"quantization_config": quantization_config})
+
         pass
 
         if is_peft:
