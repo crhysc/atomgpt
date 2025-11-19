@@ -3141,6 +3141,13 @@ class FastLlamaModel:
             apply_lora_mlp = apply_lora_mlp_swiglu
         elif model_type == "qwen3moe":
             apply_lora_mlp = apply_lora_mlp_swiglu
+        elif model_type == "gpt_oss":
+            if use_gradient_checkpointing == "unsloth":
+                try:
+                    model.gradient_checkpointing_enable()
+                except Exception:
+                    pass
+            return model
         else:
             raise NotImplementedError(
                 f"AtomGPT: {model_type} is not yet implemented!"
