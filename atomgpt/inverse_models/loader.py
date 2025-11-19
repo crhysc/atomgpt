@@ -918,14 +918,27 @@ class FastModel(FastBaseModel):
                 ]
             )
         pass
-
+        
         if load_in_4bit:
-            # Fix up bitsandbytes config
+            # Fix up bitsandbytes config, robust to missing torch_dtype/dtype.
+            cfg_dict = model.config.to_dict()
+
+            compute_dtype = cfg_dict.get("torch_dtype", None)
+            if compute_dtype is None:
+                # Newer configs may use "dtype" instead
+                compute_dtype = cfg_dict.get("dtype", None)
+
+            # Fall back to the user-specified dtype or a sensible default
+            if compute_dtype is None:
+                compute_dtype = _get_dtype(dtype)  # imported above
+
+            # Sometimes this is a string like "float16" – map to torch dtype
+            import torch
+            if isinstance(compute_dtype, str):
+                compute_dtype = getattr(torch, compute_dtype, torch.float16)
+
             quantization_config = {
-                # Sometimes torch_dtype is not a string!!
-                "bnb_4bit_compute_dtype": model.config.to_dict()[
-                    "torch_dtype"
-                ],
+                "bnb_4bit_compute_dtype": compute_dtype,
                 "bnb_4bit_quant_type": "nf4",
                 "bnb_4bit_use_double_quant": True,
                 "llm_int8_enable_fp32_cpu_offload": False,
