@@ -18,6 +18,32 @@ except Exception as exc:  # pragma: no cover
         "and ensure you are on a release that supports GPT-OSS."
     ) from exc
 
+# --- AtomGPT: fix GPT-OSS position_ids shape for rotary embeddings ---
+# Some fast-generation paths may end up passing a 1D tensor for `position_ids`
+# (shape [seq_len]), but GPT-OSS's rotary embeddings expect [batch, seq_len].
+# This wrapper upgrades 1D position_ids → [1, seq_len] to avoid IndexError.
+
+if not hasattr(GptOssModel, "_atomgpt_position_ids_patched"):
+    _original_gpt_oss_forward = GptOssModel.forward
+
+    def _atomgpt_gpt_oss_forward(self, *args, **kwargs):
+        pos = kwargs.get("position_ids", None)
+        try:
+            if pos is not None and hasattr(pos, "dim") and pos.dim() == 1:
+                # [seq_len] -> [1, seq_len]
+                kwargs["position_ids"] = pos.unsqueeze(0)
+        except Exception:
+            # Best-effort: never let our fix be the thing that breaks.
+            pass
+        return _original_gpt_oss_forward(self, *args, **kwargs)
+
+    GptOssModel.forward = _atomgpt_gpt_oss_forward
+    GptOssModel._atomgpt_position_ids_patched = True
+
+    print(
+        "AtomGPT: Patched GptOssModel.forward to fix 1D position_ids for GPT-OSS rotary embeddings."
+    )
+
 
 # Convenience list of all 4 Unsloth GPT-OSS models that are supported via
 # FastLanguageModel.from_pretrained(..., model_name=...).
