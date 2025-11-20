@@ -2013,27 +2013,39 @@ def unsloth_fast_generate(
     # For newer HF
     kwargs["cache_implementation"] = "dynamic"
     
-    # For num_logits_to_keep: only use it if the model forward actually supports it
+    # --- Handle num_logits_to_keep / logits_to_keep safely per model type ---
     import inspect
 
-    try:
-        forward_sig = inspect.signature(self.forward)
-        supports_num_logits = (
-            "num_logits_to_keep" in forward_sig.parameters
-            or "logits_to_keep" in forward_sig.parameters
-        )
-    except (TypeError, ValueError):
-        supports_num_logits = False
+    model_type = getattr(getattr(self, "config", None), "model_type", None)
 
-    if supports_num_logits:
-        num_logits_to_keep = kwargs.get("num_logits_to_keep", None)
-        logits_to_keep = kwargs.get("logits_to_keep", None)
-        if num_logits_to_keep is None and logits_to_keep is None:
-            kwargs["num_logits_to_keep"] = 1
-    else:
-        # Make sure we don't pass these through to HF generate for models that don't support them
+    # GPT-OSS does *not* advertise these kwargs in its generate/forward stack, and
+    # passing them causes HF `generate` → `_validate_model_kwargs` to raise:
+    #   ValueError: The following `model_kwargs` are not used by the model: ['num_logits_to_keep']
+    # So for GPT-OSS we always strip them.
+    if model_type == "gpt_oss":
         kwargs.pop("num_logits_to_keep", None)
         kwargs.pop("logits_to_keep", None)
+    else:
+        # For other models (llama, mistral, etc.), keep Unsloth's optimization:
+        # only use num_logits_to_keep/logits_to_keep if the model forward supports them.
+        try:
+            forward_sig = inspect.signature(self.forward)
+            supports_num_logits = (
+                "num_logits_to_keep" in forward_sig.parameters
+                or "logits_to_keep" in forward_sig.parameters
+            )
+        except (TypeError, ValueError):
+            supports_num_logits = False
+
+        if supports_num_logits:
+            num_logits_to_keep = kwargs.get("num_logits_to_keep", None)
+            logits_to_keep = kwargs.get("logits_to_keep", None)
+            if num_logits_to_keep is None and logits_to_keep is None:
+                # Enable Unsloth's memory optimization for compatible models
+                kwargs["num_logits_to_keep"] = 1
+        else:
+            kwargs.pop("num_logits_to_keep", None)
+            kwargs.pop("logits_to_keep", None)
 
     # Remove token_type_ids
     kwargs.pop("token_type_ids", None)
