@@ -86,8 +86,9 @@ class FastGptOssModel(FastLlamaModel):
     * We **do**:
         - patch PEFT `PeftModelForCausalLM.forward` to the same fast path
           that LLaMA / Mistral use.
-        - patch `prepare_inputs_for_generation` for `GptOssForCausalLM`, so
-          that your generation path stays consistent with LLaMA / Mistral.
+        - (for now) leave `GptOssForCausalLM.prepare_inputs_for_generation`
+          untouched, because the LLaMA-style patch breaks GPT-OSS attention
+          shapes during sampling.
     * Everything else is delegated to `FastLlamaModel.from_pretrained` with
       `model_patcher=FastGptOssModel`, to keep the hierarchy uniform.
     """
@@ -106,16 +107,22 @@ class FastGptOssModel(FastLlamaModel):
         global PeftModelForCausalLM  # imported from llama.py via *
         PeftModelForCausalLM.forward = PeftModelForCausalLM_fast_forward
 
-        # Reuse the generation input patcher so GPT-OSS works with your
-        # custom `prepare_inputs_for_generation` handling (past-key-values,
-        # sliding window, etc.), analogous to Mistral / LLaMA.
-        fix_prepare_inputs_for_generation(GptOssForCausalLM)
+        # IMPORTANT:
+        # Do NOT call `fix_prepare_inputs_for_generation(GptOssForCausalLM)`
+        # here. That patch is tailored to LLaMA/Mistral KV-cache semantics and
+        # causes attention shape mismatches for GPT-OSS (e.g. value_states
+        # ending up with seq_len = 1 instead of the full context length).
+        #
+        # We'll rely on the official transformers implementation of
+        # `prepare_inputs_for_generation` for GPT-OSS instead.
+        # fix_prepare_inputs_for_generation(GptOssForCausalLM)
 
         _log_once(
-            "AtomGPT: Patched GPT-OSS (GptOssForCausalLM + PEFT) for "
-            "FastLanguageModel integration."
+            "AtomGPT: Patched GPT-OSS (PEFT fast forward only; "
+            "using native prepare_inputs_for_generation)."
         )
         return
+
 
     @staticmethod
     def from_pretrained(
