@@ -593,7 +593,9 @@ def main(config_file=None):
             num_train_epochs=config.num_epochs,
             save_strategy=config.save_strategy,
             save_steps=config.save_steps,
-        ),
+            disable_tqdm=False,
+            log_level="info", 
+            ),
     )
     if callback_samples > 0:
         callback = ExampleTrainerCallback(
