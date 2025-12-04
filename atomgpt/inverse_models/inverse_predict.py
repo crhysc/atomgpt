@@ -79,13 +79,10 @@ def relax_atoms(
 
     calculator = AlignnAtomwiseCalculator(path=default_path(), device="cpu")
     t1 = time.time()
-    # if calculator is None:
-    #  return atoms
     ase_atoms = atoms.ase_converter()
     ase_atoms.calc = calculator
 
     ase_atoms = ExpCellFilter(ase_atoms, constant_volume=constant_volume)
-    # TODO: Make it work with any other optimizer
     dyn = FIRE(ase_atoms)
     dyn.run(fmax=fmax, steps=nsteps)
     en = ase_atoms.atoms.get_potential_energy()
@@ -114,9 +111,6 @@ def predict(
     load_in_4bit=None,  # temp_config["load_in_4bit"]
     verbose=True,  # temp_config["load_in_4bit"]
 ):
-    # if not os.path.exists("config_name"):
-
-    #    config_name=os.path.join(output_dir,"config.json")
     print("config_path", config_path)
     if output_dir is not None:
         config_name = os.path.join(output_dir, "config.json")
@@ -125,7 +119,7 @@ def predict(
             config_name = os.path.join(parent, "config.json")
         adapter = os.path.join(output_dir, "adapter_config.json")
         if os.path.exists(adapter):
-            model_name = output_dir  # temp_config["model_name"]
+            model_name = output_dir
     if config_path is not None:
         config_name = config_path
         if verbose:
@@ -198,21 +192,18 @@ def predict(
                 formula=formula,
                 background_subs=background_subs,
             )
-            # y[y < 0.1] = 0
-            y_new_str = y  # "\n".join(["{0:.2f}".format(x) for x in y])
+            y_new_str = y
             try:
                 if ".dat" in i:
                     formula = str(_formula.split("/")[-1].split(".dat")[0])
             except Exception:
                 pass
-            # gen_mat = main_spectra(spectra=[[y_new_str,y]],formulas=[formula],model=model,tokenizer=tokenizer,device='cuda')[0]
             prompt = (
                 "The chemical formula is "
                 + formula
                 + " The "
                 + temp_config["prop"]
                 + " is "
-                # + " The XRD is "
                 + y_new_str
                 + ". Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
             )
@@ -224,13 +215,13 @@ def predict(
                     + " The "
                     + temp_config["prop"]
                     + " is "
-                    # + " The XRD is "
                     + str(prop_val)
                     + ". Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
                 )
 
         if verbose:
             print("prompt here", prompt.replace("\n", ","))
+
         gen_mat = gen_atoms(
             prompt=prompt,
             model=model,
@@ -239,6 +230,18 @@ def predict(
             instruction=temp_config["instruction"],
             device=device,
         )
+
+        if gen_mat is None:
+            print(
+                "The structure returned by gen_mat() is not a valid crystal structure."
+            )
+            info = {}
+            info["prompt"] = prompt
+            info["error"] = "Invalid structure returned by AtomGPT (None)."
+            mem.append(info)
+            # skip the rest of the loop for this entry
+            continue
+
         if verbose:
             print("gen atoms", gen_mat)
             print("gen atoms spacegroup", gen_mat.spacegroup())
@@ -257,8 +260,6 @@ def predict(
 
 
 if __name__ == "__main__":
-    # output_dir = make_id_prop()
-    # output_dir="."
     args = parser.parse_args(sys.argv[1:])
     print("args.config_path", args.config_path)
     predict(
@@ -271,5 +272,4 @@ if __name__ == "__main__":
         config_path=args.config_path,
         prop_val=args.prop_val,
         background_subs=args.background_subs,
-        # config_name=args.config_name,
     )
