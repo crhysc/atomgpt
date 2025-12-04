@@ -293,6 +293,12 @@ def evaluate(
                 miss_writer.writerow([sample_id, "prediction", "invalid_prediction", gen_err, ""])
                 continue
 
+            if os.environ.get("PRINT_STRUCTURES"):
+                print("Target Structure:")
+                print(target_mat)
+                print("Predicted Structure:")
+                print(gen_mat)
+
             try:
                 ok_writer.writerow([
                     sample_id,
