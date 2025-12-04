@@ -263,11 +263,17 @@ def evaluate(
             target_err = None
             try:
                 target_mat = text2atoms("\n" + i["output"])
+                if os.environ.get("PRINT_STRUCTURES"):
+                    print(f"Target Structure ({sample_id}):")
+                    print(target_mat)
+
                 ok, detail = _validate_atoms(target_mat)
                 if not ok:
                     target_err = detail
             except Exception as e:
                 target_err = f"text2atoms:{type(e).__name__}:{e}"
+                if os.environ.get("PRINT_STRUCTURES"):
+                    print(f"Target Structure ({sample_id}) FAILED: {target_err}")
 
             if target_err:
                 miss_writer.writerow([sample_id, "target", "invalid_target", target_err, (i.get("output","")[:240])])
@@ -283,21 +289,21 @@ def evaluate(
                     alpaca_prompt=config.alpaca_prompt,
                     instruction=config.instruction,
                 )
+                if os.environ.get("PRINT_STRUCTURES"):
+                    print(f"Predicted Structure ({sample_id}):")
+                    print(gen_mat)
+
                 ok, detail = _validate_atoms(gen_mat)
                 if not ok:
                     gen_err = detail
             except Exception as e:
                 gen_err = f"gen_atoms:{type(e).__name__}:{e}"
+                if os.environ.get("PRINT_STRUCTURES"):
+                    print(f"Predicted Structure ({sample_id}) FAILED: {gen_err}")
 
             if gen_err:
                 miss_writer.writerow([sample_id, "prediction", "invalid_prediction", gen_err, ""])
                 continue
-
-            if os.environ.get("PRINT_STRUCTURES"):
-                print("Target Structure:")
-                print(target_mat)
-                print("Predicted Structure:")
-                print(gen_mat)
 
             try:
                 ok_writer.writerow([
