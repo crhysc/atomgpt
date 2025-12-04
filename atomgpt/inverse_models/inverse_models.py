@@ -281,8 +281,9 @@ def evaluate(
 
             gen_mat = None
             gen_err = None
+            raw_response = ""
             try:
-                gen_mat = gen_atoms(
+                gen_mat, raw_response = gen_atoms(
                     prompt=i["input"],
                     tokenizer=tokenizer,
                     model=model,
@@ -300,6 +301,8 @@ def evaluate(
                 gen_err = f"gen_atoms:{type(e).__name__}:{e}"
                 if os.environ.get("PRINT_STRUCTURES"):
                     print(f"Predicted Structure ({sample_id}) FAILED: {gen_err}")
+                    print(f"Raw LLM Output ({sample_id}):")
+                    print(raw_response)
 
             if gen_err:
                 miss_writer.writerow([sample_id, "prediction", "invalid_prediction", gen_err, ""])

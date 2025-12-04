@@ -175,7 +175,7 @@ def gen_atoms(
 
         print(exp)
         pass
-    return atoms
+    return atoms, response
 
 
 def get_crystal_string_t(atoms):
@@ -381,7 +381,7 @@ def main_spectra(
             + " Generate atomic structure description with lattice lengths, angles, coordinates and atom types."
         )
         # print(info)
-        atoms = gen_atoms(
+        atoms, _ = gen_atoms(
             prompt=info["input"],
             model=model,
             alpaca_prompt=alpaca_prompt,
