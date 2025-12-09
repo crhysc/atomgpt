@@ -12,5 +12,5 @@ class LoadedModel:
 
 
 class ChatTemplate(Protocol):
-    def format() -> str:
+    def format(self, instruction: str, user_input: str, output: str | None = None) -> str:
         pass
