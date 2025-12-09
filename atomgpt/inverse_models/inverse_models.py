@@ -1,5 +1,9 @@
 from typing import Optional
+from typing import Dict
+from typing import Literal
 from atomgpt.inverse_models.loader import FastLanguageModel
+from .factories import LanguageModelFactory, get_lm_factory
+from .products import LoadedModel, ChatTemplate
 
 # from unsloth import FastLanguageModel
 from atomgpt.inverse_models.callbacks import (
@@ -32,9 +36,9 @@ from pydantic_settings import BaseSettings
 import sys
 import json
 import argparse
-from typing import Literal
 import time
 from jarvis.core.composition import Composition
+import traceback
 
 # from atomgpt.inverse_models.custom_trainer import CustomSFTTrainer
 
@@ -301,6 +305,7 @@ def evaluate(
                 gen_err = f"gen_atoms:{type(e).__name__}:{e}"
                 if os.environ.get("PRINT_STRUCTURES"):
                     print(f"Predicted Structure ({sample_id}) FAILED: {gen_err}")
+                    print(traceback.format_exc())
                     print(f"Raw LLM Output ({sample_id}):")
                     print(raw_response)
 
@@ -521,38 +526,10 @@ def main(config_file=None):
         print(alpaca_prop_test_filename, "exists")
         m_test = loadjson(alpaca_prop_test_filename)
 
-    # 4bit pre quantized models we support for 4x faster downloading + no OOMs.
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=config.model_name,  # Choose ANY! eg teknium/OpenHermes-2.5-Mistral-7B
-        max_seq_length=config.max_seq_length,
-        dtype=config.dtype,
-        load_in_4bit=config.load_in_4bit,
-        # token = "hf_...", # use one if using gated models like meta-llama/Llama-2-7b-hf
-    )
-    if not isinstance(model, PeftModel):
-        # import sys
-        print("Not Peft model")
-        # sys.exit()
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=config.lora_rank,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
-            target_modules=[
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
-            lora_alpha=config.lora_alpha,
-            lora_dropout=0,  # Supports any, but = 0 is optimized
-            bias="none",  # Supports any, but = "none" is optimized
-            use_gradient_checkpointing=True,
-            random_state=3407,
-            use_rslora=False,  # We support rank stabilized LoRA
-            loftq_config=None,  # And LoftQ
-        )
+    factory = get_lm_factory(config)
+    loaded: LoadedModel = factory.load_for_training(config)
+    model, tokenizer = loaded.model, loaded.tokenizer
+    chat_template = factory.create_chat_template(config)
 
     EOS_TOKEN = tokenizer.eos_token  # Must add EOS_TOKEN
     # tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -647,8 +624,6 @@ def main(config_file=None):
     trainer = SFTTrainer(
         model=model,
         train_dataset=tokenized_train,
-        # train_dataset = train_dataset,
-        # tokenizer = tokenizer,
         args=SFTConfig(
             dataset_text_field="text",
             max_seq_length=config.max_seq_length,
@@ -672,44 +647,19 @@ def main(config_file=None):
     if callback_samples > 0:
         callback = ExampleTrainerCallback(
             some_tokenized_dataset=tokenized_eval,
-            # some_tokenized_dataset=tokenized_eval,
             tokenizer=tokenizer,
             max_length=config.max_seq_length,
             callback_samples=callback_samples,
         )
         trainer.add_callback(callback)
+    
     gpu_usage = PrintGPUUsageCallback()
     trainer.add_callback(gpu_usage)
-    trainer_stats = trainer.train()
+    trainer_stats = trainer.train(resume_from_checkpoint=True)
     trainer.save_model(config.model_save_path)
-    # model.save_pretrained(config.model_save_path)
 
-    # model, tokenizer = FastLanguageModel.from_pretrained(
-    #    model_name=config.model_save_path,  # YOUR MODEL YOU USED FOR TRAINING
-    #    max_seq_length=config.max_seq_length,
-    #    dtype=config.dtype,
-    #    load_in_4bit=config.load_in_4bit,
-    # )
     model = trainer.model
-    FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
-    # model, tokenizer, config = load_model(path=config.model_save_path)
-    # batch_evaluate(
-    #   prompts=[i["input"] for i in m_test],
-    #   model=model,
-    #   tokenizer=tokenizer,
-    #   csv_out=config.csv_out,
-    #   config=config,
-    # )
-    # t1 = time.time()
-    # batch_evaluate(
-    #    test_set=m_test,
-    #    model=model,
-    #    tokenizer=tokenizer,
-    #    csv_out=config.csv_out,
-    #    config=config,
-    # )
-    # t2 = time.time()
-    # t1a = time.time()
+    FastLanguageModel.for_inference(model)
     evaluate(
         test_set=m_test,
         model=model,
