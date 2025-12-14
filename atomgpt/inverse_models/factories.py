@@ -1,7 +1,7 @@
 # factories.py
 
 from abc import ABC, abstractmethod
-from atomgpt.inverse_models.products import LoadedModel, ChatTemplate
+from atomgpt.inverse_models.products import LoadedModel
 from typing import Callable
 from atomgpt.inverse_models.inverse_models import TrainingPropConfig
 from peft import PeftModel
