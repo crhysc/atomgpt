@@ -7,6 +7,15 @@ __all__ = [
 from typing import Union, Callable, Optional, List, Dict
 import torch
 from typing import Any
+from jarvis.core.atoms import Atoms
+from jarvis.io.vasp.inputs import Poscar
+from jarvis.core.composition import Composition
+from atomgpt.inverse_models.utils import (
+    gen_atoms,
+    text2atoms,
+    get_crystal_string_t,
+    get_figlet,
+)
 
 
 # From https://www.geeksforgeeks.org/longest-common-substring-array-strings/
