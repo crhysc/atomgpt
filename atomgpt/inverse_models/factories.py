@@ -3,7 +3,9 @@
 from abc import ABC, abstractmethod
 from atomgpt.inverse_models.products import LoadedModel
 from typing import Callable
-from atomgpt.inverse_models.inverse_models import TrainingPropConfig
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from atomgpt.inverse_models.inverse_models import TrainingPropConfig
 from peft import PeftModel
 from atomgpt.inverse_models.loader import FastLanguageModel as AtomGPTFastLanguageModel
 from unsloth import FastLanguageModel as UnslothFastLanguageModel
