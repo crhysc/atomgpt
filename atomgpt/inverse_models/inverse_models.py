@@ -36,6 +36,7 @@ import argparse
 import time
 from jarvis.core.composition import Composition
 import traceback
+from atomgpt.inverse_models.dataset_utils import make_alpaca_json
 
 # from atomgpt.inverse_models.custom_trainer import CustomSFTTrainer
 
