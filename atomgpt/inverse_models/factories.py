@@ -1,15 +1,15 @@
 # factories.py
 
 from abc import ABC, abstractmethod
-from .products import LoadedModel, ChatTemplate
+from atomgpt.inverse_models.products import LoadedModel, ChatTemplate
 from typing import Callable
-from .inverse_models import TrainingPropConfig
+from atomgpt.inverse_models.inverse_models import TrainingPropConfig
 from peft import PeftModel
-from .loader import FastLanguageModel as AtomGPTFastLanguageModel
+from atomgpt.inverse_models.loader import FastLanguageModel as AtomGPTFastLanguageModel
 from unsloth import FastLanguageModel as UnslothFastLanguageModel
 from typing import Dict
-from .dataset_utils import alpaca_formatting_prompts_func
-from .dataset_utils import harmony_formatting_prompts_func
+from atomgpt.inverse_models.dataset_utils import alpaca_formatting_prompts_func
+from atomgpt.inverse_models.dataset_utils import harmony_formatting_prompts_func
 from functools import partial
 from typing import List
 
