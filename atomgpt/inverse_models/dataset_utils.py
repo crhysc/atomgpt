@@ -765,6 +765,39 @@ def sft_prepare_dataset(
     return dataset
 pass
 
+def get_input(config=None, chem="", val=10):
+    if config.chem_info == "none":
+        prefix = ""
+    elif config.chem_info == "element_list":
+        prefix = (
+            "The chemical elements are "
+            + chem  # atoms.composition.search_string
+            + " . "
+        )
+    elif config.chem_info == "element_dict":
+        prefix = (
+            "The chemical contents are "
+            + chem  # atoms.composition.search_string
+            + " . "
+        )
+    elif config.chem_info == "formula":
+        prefix = (
+            "The chemical formula is "
+            + chem  # atoms.composition.reduced_formula
+            + " . "
+        )
+
+    inp = (
+        prefix
+        + "The  "
+        + config.prop
+        + " is "
+        + str(val)
+        + "."
+        + config.output_prompt
+    )
+    return inp
+
 def make_alpaca_json(
     dataset=[],
     jids=[],

@@ -110,39 +110,6 @@ class TrainingPropConfig(BaseSettings):
     logging_steps: int = 10
 
 
-def get_input(config=None, chem="", val=10):
-    if config.chem_info == "none":
-        prefix = ""
-    elif config.chem_info == "element_list":
-        prefix = (
-            "The chemical elements are "
-            + chem  # atoms.composition.search_string
-            + " . "
-        )
-    elif config.chem_info == "element_dict":
-        prefix = (
-            "The chemical contents are "
-            + chem  # atoms.composition.search_string
-            + " . "
-        )
-    elif config.chem_info == "formula":
-        prefix = (
-            "The chemical formula is "
-            + chem  # atoms.composition.reduced_formula
-            + " . "
-        )
-
-    inp = (
-        prefix
-        + "The  "
-        + config.prop
-        + " is "
-        + str(val)
-        + "."
-        + config.output_prompt
-    )
-    return inp
-
 def load_model(path="", config=None):
     if config is None:
         config_file = os.path.join(path, "config.json")
