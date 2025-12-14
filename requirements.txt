@@ -26,9 +26,9 @@ frozenlist==1.6.0
 fsspec==2025.3.0
 gguf==0.16.3
 greenlet==3.2.4
-hf-xet>=1.1.2
+hf-xet==1.1.2
 hf_transfer==0.1.9
-huggingface-hub>=0.32.0
+huggingface-hub==0.32.0
 idna==3.10
 imageio==2.37.0
 importlib_metadata==8.7.0
@@ -112,6 +112,7 @@ typing-inspection==0.4.1
 typing_extensions==4.13.2
 tyro==0.9.21
 tzdata==2025.2
+unsloth>=2024.10,<2025.3
 urllib3==2.4.0
 uv==0.7.8
 xformers==0.0.30
