@@ -1,7 +1,7 @@
 # products.py
 
 from dataclasses import dataclass
-from typing import Protocol, Any
+from typing import Protocol, Any, Callable
 import torch
 from transformers import PreTrainedTokenizerBase
 
@@ -12,5 +12,5 @@ class LoadedModel:
 
 
 class DatasetFormattingFunction(Protocol):
-    def get_formatting_prompts_func() -> function:
+    def get_formatting_prompts_func() -> Callable:
         pass
