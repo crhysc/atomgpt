@@ -1,5 +1,7 @@
 # factories.py
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from atomgpt.inverse_models.products import LoadedModel
 from typing import Callable
@@ -7,8 +9,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from atomgpt.inverse_models.inverse_models import TrainingPropConfig
 from peft import PeftModel
-from atomgpt.inverse_models.loader import FastLanguageModel as AtomGPTFastLanguageModel
-from unsloth import FastLanguageModel as UnslothFastLanguageModel
 from typing import Dict
 from atomgpt.inverse_models.dataset_utils import alpaca_formatting_prompts_func
 from atomgpt.inverse_models.dataset_utils import harmony_formatting_prompts_func
@@ -32,6 +32,7 @@ class LanguageModelFactory(ABC):
 
 class AtomGPTFactory(LanguageModelFactory):
     def load_for_training(self, config: TrainingPropConfig) -> LoadedModel:
+        from atomgpt.inverse_models.loader import FastLanguageModel as AtomGPTFastLanguageModel
         model, tokenizer = AtomGPTFastLanguageModel.from_pretrained(
             model_name=config.model_name,
             max_seq_length=config.max_seq_length,
@@ -83,6 +84,7 @@ class AtomGPTFactory(LanguageModelFactory):
 
 class GPTOSSFactory(LanguageModelFactory):
     def load_for_training(self, config: TrainingPropConfig) -> LoadedModel:
+        from unsloth import FastLanguageModel as UnslothFastLanguageModel
         model, tokenizer = UnslothFastLanguageModel.from_pretrained(
             model_name=config.model_name,
             max_seq_length=config.max_seq_length,
