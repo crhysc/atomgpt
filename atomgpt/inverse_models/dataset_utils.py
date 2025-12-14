@@ -753,6 +753,67 @@ def sft_prepare_dataset(
         )
     pass
     return dataset
-
-
 pass
+
+def make_alpaca_json(
+    dataset=[],
+    jids=[],
+    # prop="Tc_supercon",
+    # instruction="",
+    include_jid=False,
+    # chem_info="",
+    # output_prompt="",
+    config=None,
+):
+    mem = []
+    print("config.prop", config.prop)
+    for i in dataset:
+        if i[config.prop] != "na" and i[config.id_tag] in jids:
+            atoms = Atoms.from_dict(i["atoms"])
+            info = {}
+            if include_jid:
+                info["id"] = i[config.id_tag]
+            info["instruction"] = config.instruction
+            if config.chem_info == "none":
+                chem = ""
+            elif config.chem_info == "element_list":
+                chem = atoms.composition.search_string
+            elif config.chem_info == "element_dict":
+                comp = Composition.from_string(
+                    atoms.composition.reduced_formula
+                )
+                chem = comp.to_dict()
+                chem = str(dict(sorted(chem.items())))
+            elif config.chem_info == "formula":
+                chem = atoms.composition.reduced_formula
+
+            inp = get_input(config=config, val=i[config.prop], chem=chem)
+            info["input"] = inp
+
+            info["output"] = get_crystal_string_t(atoms)
+            mem.append(info)
+    return mem
+
+def alpaca_formatting_prompts_func(examples: Dict[str, Any], alpaca_prompt: str, eos_token: str) -> Dict[str, List[str]]:
+    inst = examples["instruction"]
+    inp  = examples["input"]
+    out  = examples["output"]
+    texts = [alpaca_prompt.format(i, x, y) + eos_token for i, x, y in zip(inst, inp, out)]
+    return {"text": texts}
+
+def harmony_formatting_prompts_func(examples: Dict[str, Any], tokenizer) -> Dict[str, List[str]]:
+    inst = examples["instruction"]
+    inp  = examples["input"]
+    out  = examples["output"]
+    texts: List[str] = []
+    for i, x, y in zip(inst, inp, out):
+        messages = []
+        i = (i or "").strip()
+        x = (x or "").strip()
+        y = (y or "").strip()
+        if i:
+            messages.append({"role": "developer", "content": i})
+        messages.append({"role": "user", "content": x})
+        messages.append({"role": "assistant", "content": y})
+        texts.append(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False))
+    return {"text": texts}

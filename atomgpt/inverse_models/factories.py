@@ -2,11 +2,16 @@
 
 from abc import ABC, abstractmethod
 from .products import LoadedModel, ChatTemplate
+from typing import Callable
 from .inverse_models import TrainingPropConfig
 from peft import PeftModel
 from .loader import FastLanguageModel as AtomGPTFastLanguageModel
 from unsloth import FastLanguageModel as UnslothFastLanguageModel
 from typing import Dict
+from .dataset_utils import alpaca_formatting_prompts_func
+from .dataset_utils import harmony_formatting_prompts_func
+from functools import partial
+from typing import List
 
 
 class LanguageModelFactory(ABC):
@@ -19,19 +24,7 @@ class LanguageModelFactory(ABC):
         pass
 
     @abstractmethod
-    def create_chat_template(self, config: TrainingPropConfig) -> ChatTemplate:
-        pass
-
-
-class AlpacaTemplate:
-    def format(self, instruction: str, user_input: str, output: str | None = None) -> str:
-        if output is None:
-            output = ""
-        return f"### Instruction:\n{instruction}\n### Input:\n{user_input}\n### Output:\n{output}"
-
-
-class HarmonyTemplate:
-    def format(self, instruction: str, user_input: str, output: str | None = None) -> str:
+    def get_formatting_prompts_func(self, config, model, tokenizer) -> Callable:
         pass
 
 
@@ -47,7 +40,7 @@ class AtomGPTFactory(LanguageModelFactory):
             # import sys
             print("Not yet a peft model, converting into peft model")
             # sys.exit()
-            model = FastLanguageModel.get_peft_model(
+            model = AtomGPTFastLanguageModel.get_peft_model(
                 model,
                 r=config.lora_rank,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
                 target_modules=[
@@ -78,11 +71,12 @@ class AtomGPTFactory(LanguageModelFactory):
             dtype=config.dtype,
             load_in_4bit=config.load_in_4bit,
         )
-        FastLanguageModel.for_inference(model)
-        return LoadedModel(model=model, tokenizer=tokenizer))
+        AtomGPTFastLanguageModel.for_inference(model)
+        return LoadedModel(model=model, tokenizer=tokenizer)
 
-    def create_chat_template(self, config: TrainingPropConfig) -> ChatTemplate:
-        return AlpacaTemplate()
+    def get_formatting_prompts_func(self, config, model, tokenizer) -> Callable:
+        eos = tokenizer.eos_token or "</s>"
+        return partial(alpaca_formatting_prompts_func, alpaca_prompt=config.alpaca_prompt, eos_token=eos)
 
 
 class GPTOSSFactory(LanguageModelFactory):
@@ -96,7 +90,7 @@ class GPTOSSFactory(LanguageModelFactory):
         )
         if not isinstance(model, PeftModel):
             print("Not yet a peft model, converting into peft model")
-            model = FastLanguageModel.get_peft_model(
+            model = UnslothFastLanguageModel.get_peft_model(
                 model,
                 r=config.lora_rank,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
                 target_modules=[
@@ -111,7 +105,7 @@ class GPTOSSFactory(LanguageModelFactory):
                 lora_alpha=config.lora_alpha,
                 lora_dropout=0,  # Supports any, but = 0 is optimized
                 bias="none",  # Supports any, but = "none" is optimized
-                use_gradient_checkpointing=unsloth,
+                use_gradient_checkpointing=True,
                 random_state=3407,
                 use_rslora=False,  # We support rank stabilized LoRA
                 loftq_config=None,  # And LoftQ
@@ -126,12 +120,11 @@ class GPTOSSFactory(LanguageModelFactory):
             dtype=config.dtype,
             load_in_4bit=config.load_in_4bit,
         )
-        FastLanguageModel.for_inference(model)
+        UnslothFastLanguageModel.for_inference(model)
         return LoadedModel(model=model, tokenizer=tokenizer)
     
-    def create_chat_template(self, config: TrainingPropConfig) -> ChatTemplate:
-        return HarmonyTemplate()
-
+    def get_formatting_prompts_func(self, config, model, tokenizer) -> Callable:
+        return partial(harmony_formatting_prompts_func, tokenizer=tokenizer)
 
 FACTORY_REGISTRY: Dict[str, type[LanguageModelFactory]] = {
     "gemma": AtomGPTFactory,
@@ -141,12 +134,12 @@ FACTORY_REGISTRY: Dict[str, type[LanguageModelFactory]] = {
     "llama": AtomGPTFactory,
     "Mistral": AtomGPTFactory,
     "mistral": AtomGPTFactory,
-    "gpt-oss": GPTOssFactory,
+    "gpt-oss": GPTOSSFactory,
 }
 
 def get_lm_factory(config: TrainingPropConfig) -> LanguageModelFactory:
     model_name = config.model_name
-    factory_cls = FACTORY_REGISTRY.get(model_name.split("/", 1)[1].split("-", 1)[0])
-    if factory_cls is None:
-        raise ValueError(f"Unsupported model name: {model_name}. No model factory found.")
-    return factory_cls()
+    if "gpt-oss" in model_name:
+        return GPTOSSFactory()
+    else:
+        return AtomGPTFactory()

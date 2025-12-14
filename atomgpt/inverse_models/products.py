@@ -11,6 +11,6 @@ class LoadedModel:
     tokenizer: PreTrainedTokenizerBase
 
 
-class ChatTemplate(Protocol):
-    def format(self, instruction: str, user_input: str, output: str | None = None) -> str:
+class DatasetFormattingFunction(Protocol):
+    def get_formatting_prompts_func() -> function:
         pass

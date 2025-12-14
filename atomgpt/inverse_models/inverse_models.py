@@ -145,62 +145,6 @@ def get_input(config=None, chem="", val=10):
     )
     return inp
 
-
-def make_alpaca_json(
-    dataset=[],
-    jids=[],
-    # prop="Tc_supercon",
-    # instruction="",
-    include_jid=False,
-    # chem_info="",
-    # output_prompt="",
-    config=None,
-):
-    mem = []
-    print("config.prop", config.prop)
-    for i in dataset:
-        if i[config.prop] != "na" and i[config.id_tag] in jids:
-            atoms = Atoms.from_dict(i["atoms"])
-            info = {}
-            if include_jid:
-                info["id"] = i[config.id_tag]
-            info["instruction"] = config.instruction
-            if config.chem_info == "none":
-                chem = ""
-            elif config.chem_info == "element_list":
-                chem = atoms.composition.search_string
-            elif config.chem_info == "element_dict":
-                comp = Composition.from_string(
-                    atoms.composition.reduced_formula
-                )
-                chem = comp.to_dict()
-                chem = str(dict(sorted(chem.items())))
-            elif config.chem_info == "formula":
-                chem = atoms.composition.reduced_formula
-
-            inp = get_input(config=config, val=i[config.prop], chem=chem)
-            info["input"] = inp
-
-            info["output"] = get_crystal_string_t(atoms)
-            mem.append(info)
-    return mem
-
-
-def formatting_prompts_func(examples, alpaca_prompt):
-    instructions = examples["instruction"]
-    inputs = examples["input"]
-    outputs = examples["output"]
-    texts = []
-    EOS_TOKEN = "</s>"
-    for instruction, input, output in zip(instructions, inputs, outputs):
-        # Must add EOS_TOKEN, otherwise your generation will go on forever!
-        text = alpaca_prompt.format(instruction, input, output) + EOS_TOKEN
-        texts.append(text)
-    return {
-        "text": texts,
-    }
-
-
 def load_model(path="", config=None):
     if config is None:
         config_file = os.path.join(path, "config.json")
@@ -410,7 +354,6 @@ def batch_evaluate(
 
 def main(config_file=None):
     if config_file is None:
-
         args = parser.parse_args(sys.argv[1:])
         config_file = args.config_name
     if not torch.cuda.is_available():
@@ -437,17 +380,13 @@ def main(config_file=None):
     run_path = os.path.dirname(id_prop_path)
     num_train = config.num_train
     num_test = config.num_test
-    # model_name = config.model_name
     callback_samples = config.callback_samples
-    # loss_function = config.loss_function
-    # id_prop_path = os.path.join(run_path, id_prop_path)
     with open(id_prop_path, "r") as f:
         reader = csv.reader(f)
         dt = [row for row in reader]
     if not num_train:
         num_test = int(len(dt) * config.test_ratio)
         num_train = len(dt) - num_test
-
     dat = []
     ids = []
     for i in tqdm(dt, total=len(dt)):
@@ -486,7 +425,7 @@ def main(config_file=None):
     print("num_train", num_train)
     print("num_test", num_test)
     test_ids = ids[num_train : num_train + num_test]
-    # test_ids = ids[num_train:]
+
     alpaca_prop_train_filename = os.path.join(
         config.output_dir, "alpaca_prop_train.json"
     )
@@ -529,11 +468,8 @@ def main(config_file=None):
     factory = get_lm_factory(config)
     loaded: LoadedModel = factory.load_for_training(config)
     model, tokenizer = loaded.model, loaded.tokenizer
-    chat_template = factory.create_chat_template(config)
+    formatting_prompts_func = factory.get_formatting_prompts_func(config, model, tokenizer)
 
-    EOS_TOKEN = tokenizer.eos_token  # Must add EOS_TOKEN
-    # tokenizer.pad_token_id = tokenizer.eos_token_id
-    # model.resize_token_embeddings(len(tokenizer))
     train_dataset = load_dataset(
         "json",
         data_files=alpaca_prop_train_filename,
@@ -546,9 +482,6 @@ def main(config_file=None):
         split="train",
         # "json", data_files="alpaca_prop_train.json", split="train"
     )
-    formatting_prompts_func_with_prompt = partial(
-        formatting_prompts_func, alpaca_prompt=config.alpaca_prompt
-    )
 
     def tokenize_function(example):
         return tokenizer(
@@ -559,12 +492,12 @@ def main(config_file=None):
         )
 
     train_dataset = train_dataset.map(
-        formatting_prompts_func_with_prompt,
+        formatting_prompts_func,
         batched=True,
         num_proc=config.dataset_num_proc
     )
     eval_dataset = eval_dataset.map(
-        formatting_prompts_func_with_prompt,
+        formatting_prompts_func,
         batched=True,
         num_proc=config.dataset_num_proc
     )
