@@ -553,7 +553,7 @@ def main(config_file=None):
     
     gpu_usage = PrintGPUUsageCallback()
     trainer.add_callback(gpu_usage)
-    trainer_stats = trainer.train(resume_from_checkpoint=True)
+    trainer_stats = trainer.train()
     trainer.save_model(config.model_save_path)
 
     model = trainer.model
