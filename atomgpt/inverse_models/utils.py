@@ -145,6 +145,7 @@ def gen_atoms(
     instruction="Below is a description of a material.",
     device="cuda",
 ):
+    print("Entering gen_atoms")
     inputs = tokenizer(
         [
             alpaca_prompt.format(
@@ -155,16 +156,18 @@ def gen_atoms(
         ],
         return_tensors="pt",
     ).to(device)
-    # print("model",model)
-    # print("prompt",prompt)
-    # print("tokenizer",tokenizer)
-    # print("max_new_tokens",max_new_tokens)
-    # print("alpaca_prompt",alpaca_prompt)
-    # print("device",device)
-    # print("instruction",instruction)
+    print(f"Inputs keys: {inputs.keys()}")
+    if 'input_ids' in inputs:
+        print(f"Input IDs shape: {inputs['input_ids'].shape}")
+    
+    print("Calling model.generate")
     outputs = model.generate(
         **inputs, max_new_tokens=max_new_tokens, use_cache=True
     )
+    print("After model.generate")
+    print(f"Outputs type: {type(outputs)}")
+    if hasattr(outputs, 'shape'):
+        print(f"Outputs shape: {outputs.shape}")
     response = tokenizer.batch_decode(outputs)[0]
     # print("response", response)
     response = response.split("# Output:")[1].strip("</s>")

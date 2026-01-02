@@ -1,3 +1,5 @@
+import os
+os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
 from typing import Optional
 from typing import Dict
 from typing import Literal
@@ -27,7 +29,6 @@ from tqdm import tqdm
 import pprint
 from jarvis.io.vasp.inputs import Poscar
 import csv
-import os
 import numpy as np
 from pydantic_settings import BaseSettings
 import sys
